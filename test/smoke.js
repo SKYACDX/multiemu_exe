@@ -195,4 +195,27 @@ assert.strictEqual(nintendoDs.audioSampleRate, 48000);
 assertAudioRate(nintendoDs, 'DS');
 assertStateRoundTrip(nintendoDs, 'DS');
 
+// --- Encoding ----------------------------------------------------------
+//
+// Every string the user sees is Spanish, and an editor or a script writing
+// a file as cp1252 instead of UTF-8 turns one accent into a replacement
+// character in the UI while everything still builds and runs. Cheap to
+// check, and it already caught four files.
+for (const file of [
+  'src/hub.js',
+  'src/main.js',
+  'src/preload.js',
+  'src/renderer/hub.js',
+  'src/renderer/renderer.js',
+  'src/renderer/audio.js',
+  'src/renderer/index.html',
+  'README.md',
+]) {
+  const bytes = fs.readFileSync(path.join(__dirname, '..', file));
+  assert.ok(
+    Buffer.compare(Buffer.from(bytes.toString('utf8'), 'utf8'), bytes) === 0,
+    `${file} is not valid UTF-8`,
+  );
+}
+
 console.log('smoke: ok');

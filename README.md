@@ -31,16 +31,16 @@ npm run dist           # genera el instalador en dist/
 `electron . ruta\a\rom.gb` arranca directo en esa ROM.
 
 Controles: flechas, `X` = A, `Z` = B, `S` = X, `A` = Y, `Q` = L, `W` = R,
-`Shift` = Select, `Enter` = Start. En DS la pantalla t·ctil es la mitad
-inferior: se usa con el ratÛn. TambiÈn sirve cualquier mando que el
-navegador reconozca con el mapeo est·ndar, sin configurar nada.
+`Shift` = Select, `Enter` = Start. En DS la pantalla t√°ctil es la mitad
+inferior: se usa con el rat√≥n. Tambi√©n sirve cualquier mando que el
+navegador reconozca con el mapeo est√°ndar, sin configurar nada.
 
-`F5` guarda el estado completo de la m·quina y `F8` lo restaura, junto a la
-ROM en un `.state`. En Game Boy no hay: ese n˙cleo todavÌa no lo soporta.
+`F5` guarda el estado completo de la m√°quina y `F8` lo restaura, junto a la
+ROM en un `.state`. En Game Boy no hay: ese n√∫cleo todav√≠a no lo soporta.
 
 > El audio de Game Boy sale del APU nuevo, que vive en la rama **`gb-apu`**
-> del repo compartido, no en `master`. El submÛdulo apunta a esa rama a
-> propÛsito; cuando se fusione, basta con mover el puntero.
+> del repo compartido, no en `master`. El subm√≥dulo apunta a esa rama a
+> prop√≥sito; cuando se fusione, basta con mover el puntero.
 
 ## Estructura
 
@@ -48,7 +48,7 @@ ROM en un `.state`. En Game Boy no hay: ese n˙cleo todavÌa no lo soporta.
 |---|---|
 | `vendor/multiemu` | Subm√≥dulo del repo compartido. `core/gb` se compila desde ah√≠, no se copia: una sola fuente de verdad para el n√∫cleo. |
 | `src/native/gb_addon.cpp` | Puente N-API. Delgado a prop√≥sito ‚Äî el equivalente del JNI de Android, sin l√≥gica de emulaci√≥n propia. |
-| `src/preload.js` | Carga los addons, elige n˙cleo por extensiÛn y traduce nombres de botÛn a los ordinales de cada uno. El objeto nativo no cruza a la p·gina; solo datos. |
+| `src/preload.js` | Carga los addons, elige n√∫cleo por extensi√≥n y traduce nombres de bot√≥n a los ordinales de cada uno. El objeto nativo no cruza a la p√°gina; solo datos. |
 | `src/renderer/` | Canvas, ritmo de frames y teclado. |
 
 ## Notas de port
@@ -69,21 +69,21 @@ escritorio y a√∫n no aplican porque falta el NDS:
 
 - `LIBMGBA_ONLY=ON` es la salida que trae el propio mGBA para no exigir
   epoxy en Windows (solo hace falta para sus frontends con GL).
-- cmake-js compila los addons con la CRT est·tica (`/MT`) y mGBA usa `/MD`
+- cmake-js compila los addons con la CRT est√°tica (`/MT`) y mGBA usa `/MD`
   por defecto. Como el `cmake_minimum_required(3.1)` de mGBA deja CMP0091
-  en OLD, `CMAKE_MSVC_RUNTIME_LIBRARY` se ignora allÌ y hay que poner
-  `/MT` a mano en `CMAKE_C_FLAGS_RELEASE` ó si no, el enlace falla con
+  en OLD, `CMAKE_MSVC_RUNTIME_LIBRARY` se ignora all√≠ y hay que poner
+  `/MT` a mano en `CMAKE_C_FLAGS_RELEASE` ‚Äî si no, el enlace falla con
   dos docenas de `__imp_*` sin resolver.
 
 ### Los parches de melonDS
 
-`vendor:melonds` aplica los dos parches de Android **enteros** m·s uno
-nuestro. Aplicarlos enteros es correcto aquÌ solo por una razÛn: este build
-usa `ENABLE_OGLRENDERER=OFF`, asÌ que ninguno de los ficheros de OpenGL
+`vendor:melonds` aplica los dos parches de Android **enteros** m√°s uno
+nuestro. Aplicarlos enteros es correcto aqu√≠ solo por una raz√≥n: este build
+usa `ENABLE_OGLRENDERER=OFF`, as√≠ que ninguno de los ficheros de OpenGL
 llega a compilar. Eso vuelve inofensivo el cambio del swizzle del
-compositor de `.bgr` a `.rgb`, que en escritorio pintarÌa los azules en
+compositor de `.bgr` a `.rgb`, que en escritorio pintar√≠a los azules en
 naranja, y a cambio salen gratis los arreglos de portabilidad a MSVC del
-mismo commit. **Si alg˙n dÌa se enciende el renderer de OpenGL, hay que
+mismo commit. **Si alg√∫n d√≠a se enciende el renderer de OpenGL, hay que
 revertir ese swizzle antes.**
 
 El parche propio (`0003`) quita un `#include <dirent.h>` de
@@ -93,95 +93,95 @@ va por FatFs (`f_opendir`), y MSVC no tiene `dirent.h`.
 ### Internet del DS
 
 Va por libslirp en modo indirecto: melonDS hace de router virtual con NAT
-sobre sockets normales del sistema. `Net_PCap` (modo directo) tambiÈn
-funcionarÌa en escritorio, al contrario que en Android, pero exige libpcap
-instalado y elegir un adaptador a mano, asÌ que slirp es el que funciona
+sobre sockets normales del sistema. `Net_PCap` (modo directo) tambi√©n
+funcionar√≠a en escritorio, al contrario que en Android, pero exige libpcap
+instalado y elegir un adaptador a mano, as√≠ que slirp es el que funciona
 sin preparar nada.
 
 No se usa el objetivo `net-utils` de melonDS: ese arrastra `Net_PCap`
-(libpcap) y `LAN`/`Netplay`/`LocalMP` (ENet), que aquÌ no hacen falta. Solo
+(libpcap) y `LAN`/`Netplay`/`LocalMP` (ENet), que aqu√≠ no hacen falta. Solo
 se compilan `Net.cpp`, `Net_Slirp.cpp` y `PacketDispatcher.cpp` dentro del
-addon, m·s `slirp.lib`.
+addon, m√°s `slirp.lib`.
 
 El parche `0004` es lo que hace falta para MSVC: las ramas de Windows de
-`Net_Slirp` est·n detr·s de `__WIN32__`, que solo define MinGW ó todo lo
-que necesitan (WSAPoll, el apaÒo de `clock_gettime`) ya estaba escrito, MSVC
-simplemente no lo veÌa. Y el shim de glib que trae libslirp usa
+`Net_Slirp` est√°n detr√°s de `__WIN32__`, que solo define MinGW ‚Äî todo lo
+que necesitan (WSAPoll, el apa√±o de `clock_gettime`) ya estaba escrito, MSVC
+simplemente no lo ve√≠a. Y el shim de glib que trae libslirp usa
 `__builtin_expect` y `__builtin_unreachable`, que MSVC no tiene.
 
 `LIBSLIRP_STATIC_BUILD` hay que repetirlo a mano en el addon por la misma
-razÛn que `JIT_ENABLED`: libslirp lo declara `PUBLIC` en su objetivo, pero
-aquÌ se importa el `.lib` ya compilado y una librerÌa importada no propaga
-nada. Sin Èl, `libslirp.h` marca todo como `__declspec(dllimport)` y el
+raz√≥n que `JIT_ENABLED`: libslirp lo declara `PUBLIC` en su objetivo, pero
+aqu√≠ se importa el `.lib` ya compilado y una librer√≠a importada no propaga
+nada. Sin √©l, `libslirp.h` marca todo como `__declspec(dllimport)` y el
 enlace falla con `__imp_slirp_*`.
 
-**Compila, enlaza y no rompe nada, pero la conexiÛn real no est·
+**Compila, enlaza y no rompe nada, pero la conexi√≥n real no est√°
 verificada en escritorio.** Para comprobarla hace falta entrar a los
 ajustes de la CWF de Nintendo desde dentro de un juego compatible y poner
-un DNS comunitario a mano ó los pasos exactos est·n en el changelog de la
+un DNS comunitario a mano ‚Äî los pasos exactos est√°n en el changelog de la
 v1.8 de Android.
 
-### Sin JIT, y por quÈ
+### Sin JIT, y por qu√©
 
 melonDS decide si puede construir su JIT probando `__x86_64__`, que MSVC no
-define, asÌ que su `cmake_dependent_option` lo apaga solo por mucho que se
-pase `-DENABLE_JIT=ON` ó la cachÈ guarda el valor pedido, no el usado. Por
-eso `ds_addon` **no** define `JIT_ENABLED`: hacerlo serÌa el desajuste de
+define, as√≠ que su `cmake_dependent_option` lo apaga solo por mucho que se
+pase `-DENABLE_JIT=ON` ‚Äî la cach√© guarda el valor pedido, no el usado. Por
+eso `ds_addon` **no** define `JIT_ENABLED`: hacerlo ser√≠a el desajuste de
 `sizeof(NDS)` del handoff, en sentido contrario.
 
-No hace falta de momento. El intÈrprete mueve SoulSilver a ~108fps en este
+No hace falta de momento. El int√©rprete mueve SoulSilver a ~108fps en este
 equipo, casi el doble de tiempo real. Si alguna vez hiciera falta, el
-camino es compilar melonDS con clang-cl, que sÌ define las macros de
+camino es compilar melonDS con clang-cl, que s√≠ define las macros de
 arquitectura al estilo GCC y acepta el `__attribute__((packed))` de
 `TinyVector.h`, manteniendo compatibilidad de ABI con los addons de MSVC.
 
-### Por quÈ RomHack Hub vive en el proceso principal
+### Por qu√© RomHack Hub vive en el proceso principal
 
 `src/shared.ts` empaqueta con esbuild el TypeScript del repo Android tal
 cual: los tres clientes de API, los parcheadores IPS/UPS/BPS, CRC32 y el
 descompresor. Es TypeScript plano sobre `fetch`, sin nada de React Native,
-asÌ que el `.exe` y el mÛvil hablan con el backend por el mismo cÛdigo.
+as√≠ que el `.exe` y el m√≥vil hablan con el backend por el mismo c√≥digo.
 
-Se empaqueta para el **proceso principal**, no para la p·gina, por dos
+Se empaqueta para el **proceso principal**, no para la p√°gina, por dos
 razones concretas que costaron encontrarse:
 
-- Un renderer con origen `file://` manda `Origin: null`, y adem·s Chromium
-  **no le deja cargar im·genes remotas** ó las car·tulas salÌan en blanco.
+- Un renderer con origen `file://` manda `Origin: null`, y adem√°s Chromium
+  **no le deja cargar im√°genes remotas** ‚Äî las car√°tulas sal√≠an en blanco.
   Por eso `hub:cover` las baja en el proceso principal y las devuelve como
   `data:`.
-- El token de la cuenta no tiene por quÈ llegar nunca a la p·gina. Se
-  guarda cifrado con `safeStorage`, que lo delega en el almacÈn del sistema
+- El token de la cuenta no tiene por qu√© llegar nunca a la p√°gina. Se
+  guarda cifrado con `safeStorage`, que lo delega en el almac√©n del sistema
   operativo; si no hay ninguno disponible, simplemente no se persiste.
 
 ### Detalles del backend encontrados al conectar
 
-Ninguno bloquea, pero conviene que la sesiÛn web los sepa:
+Ninguno bloquea, pero conviene que la sesi√≥n web los sepa:
 
 - `GET /api/v1/app/releases?platform=windows` **no filtra**: devuelve
-  tambiÈn las releases de Android, y todas traen `platform: null`. Por eso
-  el aviso de versiÛn exige que el campo diga `WINDOWS` y trata `null` como
-  "no es de esta plataforma": asÌ una release de Android nunca se ofrece
-  como actualizaciÛn del `.exe`, y el aviso empieza a funcionar solo en
+  tambi√©n las releases de Android, y todas traen `platform: null`. Por eso
+  el aviso de versi√≥n exige que el campo diga `WINDOWS` y trata `null` como
+  "no es de esta plataforma": as√≠ una release de Android nunca se ofrece
+  como actualizaci√≥n del `.exe`, y el aviso empieza a funcionar solo en
   cuanto el backend exponga el campo.
-- El cat·logo de **HackRoms est· vacÌo** (`/hacks` y `/games` devuelven 0).
-  Los parcheadores ya est·n empaquetados, asÌ que la pantalla se aÒade el
-  dÌa que haya contenido que mostrar.
-- `RomHackHubFile.platform` y `coverImageUrl` est·n tipados como
-  obligatorios pero llegan `null` en la pr·ctica. La interfaz lo trata como
+- El cat√°logo de **HackRoms est√° vac√≠o** (`/hacks` y `/games` devuelven 0).
+  Los parcheadores ya est√°n empaquetados, as√≠ que la pantalla se a√±ade el
+  d√≠a que haya contenido que mostrar.
+- `RomHackHubFile.platform` y `coverImageUrl` est√°n tipados como
+  obligatorios pero llegan `null` en la pr√°ctica. La interfaz lo trata como
   opcional.
-- El `API_BASE` del cliente compartido omite el `www`, asÌ que cada llamada
-  se come un 308. Funciona (fetch sigue la redirecciÛn) pero se paga un
-  viaje de m·s.
+- El `API_BASE` del cliente compartido omite el `www`, as√≠ que cada llamada
+  se come un 308. Funciona (fetch sigue la redirecci√≥n) pero se paga un
+  viaje de m√°s.
 
 ### Empaquetado y firma
 
 `npm run dist` deja un instalador NSIS en `dist/` (~107MB). Los addons
 nativos van fuera del asar (`asarUnpack`), porque Electron no puede cargar
-un `.node` desde dentro, y `npmRebuild` est· apagado: los compila cmake-js
+un `.node` desde dentro, y `npmRebuild` est√° apagado: los compila cmake-js
 contra el ABI de Electron, no npm.
 
 **El `.exe` no va firmado.** Sin firma, SmartScreen avisa en cada descarga
-hasta que el binario acumula reputaciÛn. La opciÛn barata y real es Azure
-Trusted Signing (~10 USD/mes); un certificado OV cl·sico cuesta varias
-veces eso y tampoco arranca con reputaciÛn. Es una decisiÛn de dinero, no
-tÈcnica, y conviene tomarla antes de publicar el primer release.
+hasta que el binario acumula reputaci√≥n. La opci√≥n barata y real es Azure
+Trusted Signing (~10 USD/mes); un certificado OV cl√°sico cuesta varias
+veces eso y tampoco arranca con reputaci√≥n. Es una decisi√≥n de dinero, no
+t√©cnica, y conviene tomarla antes de publicar el primer release.

@@ -169,6 +169,9 @@ function register() {
   // downloaded. The local sidecar .sav keeps using the ROM's name, which is
   // the predictable thing on a desktop.
   ipcMain.handle('hub:save-upload', async (event, { romPath, savePath, slot }) => {
+    if (!fs.existsSync(savePath)) {
+      throw new Error('Este juego todavía no ha guardado nada');
+    }
     const key = shared.crc32(new Uint8Array(fs.readFileSync(romPath))).toString(16).padStart(8, '0');
     const bytes = new Uint8Array(fs.readFileSync(savePath));
     await shared.uploadCloudSave(requireToken(), key, slot ?? 0, bytes, path.basename(savePath));

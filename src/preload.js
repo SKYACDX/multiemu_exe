@@ -36,8 +36,9 @@ let buttons = null;
 let savePath = null;
 let lastSaved = null;
 
-// Whole-machine snapshot, next to the ROM like the .sav. Null for a core
-// that can't take one -- core/gb has no savestate support.
+// Whole-machine snapshot, next to the ROM like the .sav. Whether the loaded
+// core can actually take one is a separate question -- core/gb can't yet, so
+// saveState/loadState below check for the method rather than for this.
 let statePath = null;
 
 // ponytail: polls the save RAM every 5s instead of tracking dirty writes.
@@ -55,6 +56,9 @@ function persistSave() {
 function open(romPath) {
   const sidecar = romPath.replace(/\.[^.]+$/, '.sav');
   savePath = null;
+  // Reset, or the next game's save RAM gets compared against the previous
+  // game's bytes and a write that should happen can be skipped.
+  lastSaved = null;
   statePath = romPath.replace(/\.[^.]+$/, '.state');
 
   if (/\.nds$/i.test(romPath)) {
@@ -76,8 +80,8 @@ function open(romPath) {
     }
   }
 
-  // audioSampleRate is absent on a core with no APU -- core/gb doesn't
-  // implement one yet, so Game Boy is silent.
+  // All three cores report 48000; the fallback is for a core that has no
+  // APU at all, which would make audioStart a no-op rather than a crash.
   return { width: core.width, height: core.height, audioSampleRate: core.audioSampleRate || 0 };
 }
 
@@ -129,4 +133,14 @@ contextBridge.exposeInMainWorld('emu', {
   // No-ops on the cores with no touch screen.
   touch: (x, y) => core.touch && core.touch(x, y),
   releaseTouch: () => core.releaseTouch && core.releaseTouch(),
+  // Called when a game is closed: the Game Boy save is otherwise only
+  // written on a timer and at exit, so up to five seconds would be lost.
+  close: () => {
+    persistSave();
+    core = null;
+    buttons = null;
+    savePath = null;
+    statePath = null;
+    lastSaved = null;
+  },
 });

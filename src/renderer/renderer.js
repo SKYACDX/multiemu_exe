@@ -27,15 +27,22 @@ const MAX_CATCHUP = 4;
 
 let due = 0;
 
+// Bumped every time a game starts or stops, so a setTimeout left over from
+// the previous game stops itself instead of running a second emulation loop
+// alongside the new one.
+let loopToken = 0;
+
 function draw() {
   image.data.set(emu.frame());
   ctx.putImageData(image, 0, 0);
 }
 
-// ponytail: setTimeout pacing, so ~1ms of jitter per frame. Fine while
-// there's no audio; move the clock to a worker if an APU ever needs the
-// frames evenly spaced.
-function loop() {
+// ponytail: setTimeout pacing, so ~1ms of jitter per frame. The audio queue
+// absorbs that (see audio.js, which keeps a lead); move the clock to a
+// worker if it ever stops being enough.
+function loop(token) {
+  if (token !== loopToken) return;
+
   const now = performance.now();
   if (due === 0) due = now;
 
@@ -55,7 +62,7 @@ function loop() {
     pollGamepad();
     draw();
   }
-  setTimeout(loop, Math.max(0, due - performance.now()));
+  setTimeout(() => loop(token), Math.max(0, due - performance.now()));
 }
 
 // Key -> button name. The preload maps names to each core's own ordinals,
@@ -97,7 +104,7 @@ window.addEventListener('keydown', (event) => {
   event.preventDefault();
   const saving = event.key === 'F5';
   if (!(saving ? emu.saveState() : emu.loadState())) {
-    toast(saving ? 'Este núcleo no guarda estados' : 'No hay ningún estado guardado');
+    toast(saving ? 'Este nÃºcleo no guarda estados' : 'No hay ningÃºn estado guardado');
     return;
   }
   toast(saving ? 'Estado guardado' : 'Estado cargado');
@@ -137,6 +144,10 @@ const PAD_BUTTONS = {
 // Enough to ignore a resting stick that never quite reads zero.
 const STICK_DEADZONE = 0.5;
 
+// Every name a pad can produce, including the four the stick adds. Built
+// once rather than per poll, which happens sixty times a second.
+const PAD_NAMES = [...new Set([...Object.values(PAD_BUTTONS), 'left', 'right', 'up', 'down'])];
+
 // Only changes are sent, so a held button isn't re-sent sixty times a
 // second -- and so the keyboard and the pad don't fight over the same
 // button every frame.
@@ -159,7 +170,7 @@ function pollGamepad() {
   if (y < -STICK_DEADZONE) pressed.up = true;
   if (y > STICK_DEADZONE) pressed.down = true;
 
-  for (const name of new Set([...Object.keys(PAD_BUTTONS).map((i) => PAD_BUTTONS[i]), 'left', 'right', 'up', 'down'])) {
+  for (const name of PAD_NAMES) {
     const down = Boolean(pressed[name]);
     if (padState[name] === down) continue;
     padState[name] = down;
@@ -220,8 +231,29 @@ function playRom(romPath) {
   emu.fitWindow(size);
   for (const panel of document.querySelectorAll('.panel')) panel.hidden = true;
   canvas.hidden = false;
-  loop();
+
+  due = 0;
+  loop(++loopToken);
 }
+
+// Without this there is no way out of a game short of closing the window --
+// which also made the cloud-save download unusable, since its own message
+// asks the user to reopen the game afterwards.
+function stopGame() {
+  if (!currentRom) return;
+  loopToken++;  // any pending timer now belongs to a dead game
+  currentRom = null;
+  emu.close();
+  audioStop();
+  canvas.hidden = true;
+  picker.hidden = false;
+}
+
+window.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;
+  event.preventDefault();
+  stopGame();
+});
 
 document.getElementById('open').addEventListener('click', async () => {
   const romPath = await emu.pickRom();
