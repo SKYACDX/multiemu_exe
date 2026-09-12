@@ -1,4 +1,5 @@
 const fs = require('fs');
+const path = require('path');
 const { contextBridge, ipcRenderer } = require('electron');
 
 const gb = require('../build/Release/gb_addon.node');
@@ -24,6 +25,27 @@ const userDataDir = argument('userdata');
 if (userDataDir) {
   fs.mkdirSync(userDataDir, { recursive: true });
   ds.setLocalDir(userDataDir);
+}
+
+// Controls and screen layout, in a plain JSON file next to the saves rather
+// than in localStorage: it sits with everything else the app writes, and a
+// user who wants to hand-edit a binding can. No IPC needed -- the preload
+// already has both fs and the directory.
+const settingsPath = userDataDir ? path.join(userDataDir, 'settings.json') : null;
+
+function readSettings() {
+  try {
+    return JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+  } catch {
+    // Missing on a first run, and unreadable if someone hand-edits it into
+    // invalid JSON. Either way the defaults are the right answer.
+    return {};
+  }
+}
+
+function writeSettings(settings) {
+  if (!settingsPath) return;
+  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
 }
 
 // One emulator per window. The native object itself can't cross
@@ -61,10 +83,14 @@ function open(romPath) {
   lastSaved = null;
   statePath = romPath.replace(/\.[^.]+$/, '.state');
 
+  let screens = 1;
   if (/\.nds$/i.test(romPath)) {
     // By path rather than by bytes: NDS images run to 512MB.
     core = new ds.Ds(romPath, sidecar);
     buttons = DS_BUTTONS;
+    // The DS hands over both screens in one frame, stacked. Saying so lets
+    // the renderer lay them out side by side instead.
+    screens = 2;
   } else if (/\.gba$/i.test(romPath)) {
     core = new gba.Gba(fs.readFileSync(romPath), sidecar);
     buttons = GBA_BUTTONS;
@@ -82,7 +108,12 @@ function open(romPath) {
 
   // All three cores report 48000; the fallback is for a core that has no
   // APU at all, which would make audioStart a no-op rather than a crash.
-  return { width: core.width, height: core.height, audioSampleRate: core.audioSampleRate || 0 };
+  return {
+    width: core.width,
+    height: core.height,
+    screens,
+    audioSampleRate: core.audioSampleRate || 0,
+  };
 }
 
 setInterval(() => core && persistSave(), SAVE_INTERVAL_MS);
@@ -103,6 +134,11 @@ contextBridge.exposeInMainWorld('hub', {
   saves: () => ipcRenderer.invoke('hub:saves'),
   uploadSave: (params) => ipcRenderer.invoke('hub:save-upload', params),
   downloadSave: (params) => ipcRenderer.invoke('hub:save-download', params),
+});
+
+contextBridge.exposeInMainWorld('settings', {
+  read: readSettings,
+  write: writeSettings,
 });
 
 contextBridge.exposeInMainWorld('emu', {

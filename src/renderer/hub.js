@@ -5,14 +5,9 @@
 // renderer.js owns the emulator itself and provides two hooks: playRom() to
 // boot a path, and loadedRom() to say what is currently running.
 
-const panels = {
-  picker: document.getElementById('picker'),
-  browser: document.getElementById('browser'),
-  account: document.getElementById('account'),
-};
-
+// Found rather than listed, so adding a panel to the page is enough.
 function show(name) {
-  for (const [key, element] of Object.entries(panels)) element.hidden = key !== name;
+  for (const panel of document.querySelectorAll('.panel')) panel.hidden = panel.id !== name;
 }
 
 for (const back of document.querySelectorAll('.back')) {

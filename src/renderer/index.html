@@ -70,6 +70,25 @@
   .row > input[type="password"],
   .row > input[type="text"] { flex: 1; }
 
+  #bindings {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  #bindings li {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 4px 8px;
+    background: #1b1b1b;
+    border-radius: 6px;
+  }
+  #bindings button { min-width: 120px; padding: 4px 10px; }
+
   #results, .saves {
     list-style: none;
     margin: 0;
@@ -126,6 +145,7 @@
     <button id="open" class="primary">Abrir ROM</button>
     <button id="browse">Descargar juegos</button>
     <button id="account-open">Cuenta</button>
+    <button id="settings-open">Controles</button>
   </div>
   <p class="muted">Durante el juego, <kbd>Esc</kbd> vuelve aquí</p>
   <p id="status"></p>
@@ -139,6 +159,25 @@
   </div>
   <p id="browser-status" class="muted"></p>
   <ul id="results"></ul>
+</div>
+
+<div id="settings" class="panel" hidden>
+  <div class="row">
+    <button class="back">Volver</button>
+    <h1>Controles</h1>
+  </div>
+  <div class="row">
+    <label for="ds-layout" style="flex: 1">Pantallas del DS</label>
+    <select id="ds-layout">
+      <option value="vertical">Una sobre otra</option>
+      <option value="horizontal">Lado a lado</option>
+    </select>
+  </div>
+  <p id="layout-note" class="muted" hidden>Se aplica al abrir el próximo juego.</p>
+  <ul id="bindings"></ul>
+  <div class="row">
+    <button id="reset-bindings">Restaurar valores por defecto</button>
+  </div>
 </div>
 
 <div id="account" class="panel" hidden>
@@ -177,4 +216,5 @@
 
 <script src="audio.js"></script>
 <script src="hub.js"></script>
+<script src="settings.js"></script>
 <script src="renderer.js"></script>

@@ -3,7 +3,10 @@ const picker = document.getElementById('picker');
 const status = document.getElementById('status');
 const ctx = canvas.getContext('2d');
 
-let image = null;
+// How the frame the core hands over maps onto the canvas. The DS produces
+// its two screens stacked; drawing them side by side is just a matter of
+// putting the second half somewhere else, with no scaling involved.
+let layout = null;
 
 // Path of the ROM currently running, or null. hub.js reads it to know which
 // game a cloud save belongs to.
@@ -33,8 +36,17 @@ let due = 0;
 let loopToken = 0;
 
 function draw() {
-  image.data.set(emu.frame());
-  ctx.putImageData(image, 0, 0);
+  const frame = emu.frame();
+  if (layout.split) {
+    const half = frame.length / 2;
+    layout.top.data.set(frame.subarray(0, half));
+    layout.bottom.data.set(frame.subarray(half));
+    ctx.putImageData(layout.top, 0, 0);
+    ctx.putImageData(layout.bottom, layout.screenWidth, 0);
+  } else {
+    layout.top.data.set(frame);
+    ctx.putImageData(layout.top, 0, 0);
+  }
 }
 
 // ponytail: setTimeout pacing, so ~1ms of jitter per frame. The audio queue
@@ -122,31 +134,13 @@ for (const [type, pressed] of [['keydown', true], ['keyup', false]]) {
 
 // ---- Gamepad ----------------------------------------------------------
 //
-// Indices come from the Gamepad API's "standard" mapping, so any controller
-// the browser recognises as standard works without per-pad configuration.
-// Face buttons follow the physical Nintendo layout rather than the labels:
-// index 0 is the bottom button, which is where A sits on a DS or a GBA.
-const PAD_BUTTONS = {
-  0: 'a',
-  1: 'b',
-  2: 'y',
-  3: 'x',
-  4: 'l',
-  5: 'r',
-  8: 'select',
-  9: 'start',
-  12: 'up',
-  13: 'down',
-  14: 'left',
-  15: 'right',
-};
+// The index -> button table is padToButton, owned by settings.js.
 
 // Enough to ignore a resting stick that never quite reads zero.
 const STICK_DEADZONE = 0.5;
 
-// Every name a pad can produce, including the four the stick adds. Built
-// once rather than per poll, which happens sixty times a second.
-const PAD_NAMES = [...new Set([...Object.values(PAD_BUTTONS), 'left', 'right', 'up', 'down'])];
+// Every name a pad can drive, whatever it happens to be bound to.
+const PAD_NAMES = ['up', 'down', 'left', 'right', 'a', 'b', 'x', 'y', 'l', 'r', 'select', 'start'];
 
 // Only changes are sent, so a held button isn't re-sent sixty times a
 // second -- and so the keyboard and the pad don't fight over the same
@@ -154,11 +148,17 @@ const PAD_NAMES = [...new Set([...Object.values(PAD_BUTTONS), 'left', 'right', '
 const padState = {};
 
 function pollGamepad() {
+  // A rebind in progress wants the next button press for itself.
+  if (isCapturing()) {
+    pollCapture();
+    return;
+  }
+
   const pad = navigator.getGamepads().find((candidate) => candidate && candidate.connected);
   if (!pad) return;
 
   const pressed = {};
-  for (const [index, name] of Object.entries(PAD_BUTTONS)) {
+  for (const [index, name] of Object.entries(padToButton)) {
     if (pad.buttons[index]?.pressed) pressed[name] = true;
   }
 
@@ -193,13 +193,16 @@ function canvasPixel(event) {
   };
 }
 
-// The DS is the only core with a touch screen, and its frame is both
-// screens stacked, so the touchable half is always the bottom one.
+// The DS is the only core with a touch screen, and it is always the second
+// of its two screens -- below the first when stacked, to its right when side
+// by side. The layout says where that lands on the canvas.
 function sendTouch(event) {
   const { x, y } = canvasPixel(event);
-  const topScreenHeight = canvas.height / 2;
-  if (x < 0 || x >= canvas.width || y < topScreenHeight || y >= canvas.height) return;
-  emu.touch(x, y - topScreenHeight);
+  const touchX = x - layout.touchX;
+  const touchY = y - layout.touchY;
+  if (touchX < 0 || touchX >= layout.screenWidth) return;
+  if (touchY < 0 || touchY >= layout.screenHeight) return;
+  emu.touch(touchX, touchY);
 }
 
 canvas.addEventListener('mousedown', (event) => {
@@ -223,12 +226,25 @@ function playRom(romPath) {
   }
   currentRom = romPath;
 
-  canvas.width = size.width;
-  canvas.height = size.height;
-  image = ctx.createImageData(size.width, size.height);
-  audioStart(size.audioSampleRate);
+  const screenHeight = size.height / size.screens;
+  const sideBySide = size.screens === 2 && dsLayout === 'horizontal';
 
-  emu.fitWindow(size);
+  canvas.width = sideBySide ? size.width * 2 : size.width;
+  canvas.height = sideBySide ? screenHeight : size.height;
+
+  layout = {
+    split: sideBySide,
+    screenWidth: size.width,
+    screenHeight,
+    top: ctx.createImageData(size.width, sideBySide ? screenHeight : size.height),
+    bottom: sideBySide ? ctx.createImageData(size.width, screenHeight) : null,
+    // Where the second screen starts, which for the DS is the touchable one.
+    touchX: sideBySide ? size.width : 0,
+    touchY: sideBySide ? 0 : screenHeight * (size.screens - 1),
+  };
+
+  audioStart(size.audioSampleRate);
+  emu.fitWindow({ width: canvas.width, height: canvas.height });
   for (const panel of document.querySelectorAll('.panel')) panel.hidden = true;
   canvas.hidden = false;
 

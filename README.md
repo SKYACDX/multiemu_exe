@@ -30,10 +30,18 @@ npm run dist           # genera el instalador en dist/
 
 `electron . ruta\a\rom.gb` arranca directo en esa ROM.
 
-Controles: flechas, `X` = A, `Z` = B, `S` = X, `A` = Y, `Q` = L, `W` = R,
-`Shift` = Select, `Enter` = Start. En DS la pantalla táctil es la mitad
-inferior: se usa con el ratón. También sirve cualquier mando que el
-navegador reconozca con el mapeo estándar, sin configurar nada.
+Controles por defecto: flechas, `X` = A, `Z` = B, `S` = X, `A` = Y, `Q` = L,
+`W` = R, `Shift` = Select, `Enter` = Start. También sirve cualquier mando
+que el navegador reconozca con el mapeo estándar, sin configurar nada.
+
+**Todo eso se puede reasignar** desde el botón «Controles»: teclado y mando
+por separado, botón a botón. Ahí mismo se elige si las dos pantallas del DS
+salen **una sobre otra** o **lado a lado**; en las dos, la pantalla táctil
+es la segunda y se usa con el ratón.
+
+Las asignaciones y el diseño viven en `settings.json` dentro de la carpeta
+de datos de la app, junto a los guardados — un JSON normal, editable a mano
+si hace falta.
 
 `F5` guarda el estado completo de la máquina y `F8` lo restaura, junto a la
 ROM en un `.state`. En Game Boy no hay: ese núcleo todavía no lo soporta.

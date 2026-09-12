@@ -1,5 +1,5 @@
 const path = require('path');
-const { app, BrowserWindow, dialog, ipcMain } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, screen } = require('electron');
 
 const hub = require('./hub');
 
@@ -15,13 +15,22 @@ ipcMain.handle('pick-rom', async () => {
   return canceled ? null : filePaths[0];
 });
 
-// Each console has its own shape -- the DS is portrait, the others are not
-// -- so the window follows whatever ROM was loaded instead of guessing.
+// Each console has its own shape -- a DS is portrait stacked and landscape
+// side by side, the others are neither -- so the window follows whatever was
+// loaded instead of guessing.
 ipcMain.handle('fit-window', (event, { width, height }) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (!win) return;
-  // Whole-number scale only, so emulator pixels stay square.
-  const scale = Math.max(1, Math.min(4, Math.floor(900 / height)));
+
+  // Whole-number scale only, so emulator pixels stay square. Bounded by both
+  // axes of the actual desktop: the DS side by side is 512 wide, and scaling
+  // that on height alone asks for a window wider than the screen.
+  const room = screen.getDisplayMatching(win.getBounds()).workAreaSize;
+  const scale = Math.max(
+    1,
+    Math.min(4, Math.floor((room.height * 0.9) / height), Math.floor((room.width * 0.9) / width)),
+  );
+
   win.setContentSize(width * scale, height * scale);
   win.center();
 });
