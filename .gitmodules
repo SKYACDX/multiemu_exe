@@ -1,0 +1,3 @@
+[submodule "vendor/multiemu"]
+	path = vendor/multiemu
+	url = https://github.com/SKYACDX/multiemu.git

@@ -1,0 +1,29 @@
+<meta charset="utf-8" />
+<title>multiemu</title>
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #101010;
+    color: #ddd;
+    font: 14px system-ui, sans-serif;
+  }
+  body { display: grid; place-items: center; }
+  #screen {
+    /* The DMG is 160x144; scale it with nearest-neighbour or every pixel
+       turns into a smear. */
+    image-rendering: pixelated;
+    width: min(100vw, calc(100vh * 160 / 144));
+    height: auto;
+  }
+  #picker { text-align: center; }
+</style>
+
+<div id="picker">
+  <p>Abre una ROM de Game Boy (.gb / .gbc)</p>
+  <input type="file" id="rom" accept=".gb,.gbc" />
+  <p id="status"></p>
+</div>
+<canvas id="screen" width="160" height="144" hidden></canvas>
+
+<script src="renderer.js"></script>
