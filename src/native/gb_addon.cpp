@@ -37,6 +37,8 @@ class GameBoy : public Napi::ObjectWrap<GameBoy> {
                                InstanceMethod("hasBattery", &GameBoy::hasBattery),
                                InstanceMethod("getSave", &GameBoy::getSave),
                                InstanceMethod("loadSave", &GameBoy::loadSave),
+                               InstanceAccessor("width", &GameBoy::width, nullptr),
+                               InstanceAccessor("height", &GameBoy::height, nullptr),
                            });
     }
 
@@ -117,13 +119,21 @@ class GameBoy : public Napi::ObjectWrap<GameBoy> {
         gameBoy_->bus().cartridge().loadRam(ram);
     }
 
+    // Constant for the DMG, but exposed per-instance so every core in this
+    // app answers the same question the same way (mGBA's dimensions are a
+    // property of the loaded core, not a compile-time constant).
+    Napi::Value width(const Napi::CallbackInfo& info) {
+        return Napi::Number::New(info.Env(), gb::kScreenWidth);
+    }
+    Napi::Value height(const Napi::CallbackInfo& info) {
+        return Napi::Number::New(info.Env(), gb::kScreenHeight);
+    }
+
     std::unique_ptr<gb::GameBoy> gameBoy_;
 };
 
 Napi::Object init(Napi::Env env, Napi::Object exports) {
     exports.Set("GameBoy", GameBoy::define(env));
-    exports.Set("SCREEN_WIDTH", Napi::Number::New(env, gb::kScreenWidth));
-    exports.Set("SCREEN_HEIGHT", Napi::Number::New(env, gb::kScreenHeight));
     return exports;
 }
 

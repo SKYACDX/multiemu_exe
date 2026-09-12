@@ -4,26 +4,30 @@
   html, body {
     margin: 0;
     height: 100%;
+    overflow: hidden; /* the canvas fills the window; nothing should scroll */
     background: #101010;
     color: #ddd;
     font: 14px system-ui, sans-serif;
   }
   body { display: grid; place-items: center; }
   #screen {
-    /* The DMG is 160x144; scale it with nearest-neighbour or every pixel
-       turns into a smear. */
+    width: 100%;
+    height: 100%;
+    /* canvas is a replaced element, so object-fit letterboxes it at the
+       core's own aspect ratio -- 160x144 for GB, 240x160 for GBA. */
+    object-fit: contain;
     image-rendering: pixelated;
-    width: min(100vw, calc(100vh * 160 / 144));
-    height: auto;
   }
   #picker { text-align: center; }
+  button { font: inherit; padding: 8px 16px; }
+  #status { color: #e06c5a; min-height: 1em; }
 </style>
 
 <div id="picker">
-  <p>Abre una ROM de Game Boy (.gb / .gbc)</p>
-  <input type="file" id="rom" accept=".gb,.gbc" />
+  <button id="open">Abrir ROM</button>
+  <p>Game Boy, Game Boy Color o Game Boy Advance</p>
   <p id="status"></p>
 </div>
-<canvas id="screen" width="160" height="144" hidden></canvas>
+<canvas id="screen" hidden></canvas>
 
 <script src="renderer.js"></script>

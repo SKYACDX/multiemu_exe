@@ -6,7 +6,9 @@
   "scripts": {
     "build": "cmake-js compile --runtime electron --runtime-version 44.3.0",
     "start": "npm run build && electron .",
-    "test": "npm run build && set ELECTRON_RUN_AS_NODE=1&&electron test/smoke.js"
+    "test": "npm run build && set ELECTRON_RUN_AS_NODE=1&&electron test/smoke.js",
+    "build:mgba": "cmake -S third_party/mgba -B third_party/mgba/build-win -A x64 -DLIBMGBA_ONLY=ON -DBUILD_QT=OFF -DBUILD_SDL=OFF -DBUILD_LIBRETRO=OFF -DUSE_FFMPEG=OFF -DUSE_SQLITE3=OFF -DUSE_DISCORD_RPC=OFF -DUSE_LUA=OFF -DUSE_LIBZIP=OFF -DUSE_MINIZIP=OFF -DUSE_ELF=OFF -DUSE_LZMA=OFF -DUSE_PNG=OFF -DUSE_ZLIB=ON -DUSE_DEBUGGERS=OFF -DBUILD_GL=OFF -DBUILD_GLES2=OFF -DBUILD_GLES3=OFF -DBUILD_STATIC=ON -DBUILD_SHARED=OFF -DCMAKE_C_FLAGS_RELEASE=\"/MT /O2 /Ob2 /DNDEBUG\" -DCMAKE_CXX_FLAGS_RELEASE=\"/MT /O2 /Ob2 /DNDEBUG\" && cmake --build third_party/mgba/build-win --config Release --target mgba",
+    "vendor:mgba": "git clone --depth 1 --branch 0.10.5 https://github.com/mgba-emu/mgba.git third_party/mgba"
   },
   "devDependencies": {
     "cmake-js": "8.0.0",
