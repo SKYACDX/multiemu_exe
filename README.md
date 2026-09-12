@@ -38,6 +38,10 @@ navegador reconozca con el mapeo estándar, sin configurar nada.
 `F5` guarda el estado completo de la máquina y `F8` lo restaura, junto a la
 ROM en un `.state`. En Game Boy no hay: ese núcleo todavía no lo soporta.
 
+> El audio de Game Boy sale del APU nuevo, que vive en la rama **`gb-apu`**
+> del repo compartido, no en `master`. El submódulo apunta a esa rama a
+> propósito; cuando se fusione, basta con mover el puntero.
+
 ## Estructura
 
 | Ruta | QuÃ© es |

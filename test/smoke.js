@@ -80,6 +80,38 @@ assert.ok(
 assert.strictEqual(frame[0], frame[1]);
 assert.strictEqual(frame[1], frame[2]);
 
+assert.strictEqual(gameBoy.audioSampleRate, 48000);
+assertAudioRate(gameBoy, 'Game Boy');
+
+// The stripes ROM above never touches the sound registers, so it proves the
+// rate but not that anything can actually be heard. This one is fourteen
+// hand-assembled SM83 instructions that switch the APU on and hold a note
+// on square channel 1.
+//
+// Execution starts at 0x0100, which is where the cartridge header begins, so
+// the entry point is the usual jump over it and the code lives at 0x0150.
+const toneRom = Buffer.alloc(0x8000);
+Buffer.from([0xc3, 0x50, 0x01]).copy(toneRom, 0x100); // jp $0150
+Buffer.from([
+  0x3e, 0x80, 0xe0, 0x26, // ld a,$80 / ldh [$26],a -- NR52: power on
+  0x3e, 0x77, 0xe0, 0x24, // ld a,$77 / ldh [$24],a -- NR50: full volume
+  0x3e, 0xff, 0xe0, 0x25, // ld a,$FF / ldh [$25],a -- NR51: both sides
+  0x3e, 0x80, 0xe0, 0x11, // ld a,$80 / ldh [$11],a -- NR11: 50% duty
+  0x3e, 0xf0, 0xe0, 0x12, // ld a,$F0 / ldh [$12],a -- NR12: volume 15
+  0x3e, 0x00, 0xe0, 0x13, // ld a,$00 / ldh [$13],a -- NR13: frequency low
+  0x3e, 0x87, 0xe0, 0x14, // ld a,$87 / ldh [$14],a -- NR14: trigger
+  0x18, 0xfe,             // jr -2 -- hold the note
+]).copy(toneRom, 0x150);
+// 0x00 at 0x147 is "ROM ONLY", which is what gb::loadCartridge checks.
+
+const singing = new gb.GameBoy(new Uint8Array(toneRom));
+for (let i = 0; i < 10; i++) singing.runFrame();
+
+const tone = singing.readAudio(4096);
+let tonePeak = 0;
+for (const sample of tone) tonePeak = Math.max(tonePeak, Math.abs(sample));
+assert.ok(tonePeak > 0, 'the tone ROM produced silence');
+
 assert.throws(() => new gb.GameBoy(new Uint8Array(16)), /invalid ROM header/);
 
 // --- GBA -------------------------------------------------------------

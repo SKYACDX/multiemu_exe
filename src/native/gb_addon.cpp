@@ -5,6 +5,7 @@
 // the boundary.
 #include <napi.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -37,6 +38,8 @@ class GameBoy : public Napi::ObjectWrap<GameBoy> {
                                InstanceMethod("hasBattery", &GameBoy::hasBattery),
                                InstanceMethod("getSave", &GameBoy::getSave),
                                InstanceMethod("loadSave", &GameBoy::loadSave),
+                               InstanceMethod("readAudio", &GameBoy::readAudio),
+                               InstanceAccessor("audioSampleRate", &GameBoy::audioSampleRate, nullptr),
                                InstanceAccessor("width", &GameBoy::width, nullptr),
                                InstanceAccessor("height", &GameBoy::height, nullptr),
                            });
@@ -117,6 +120,27 @@ class GameBoy : public Napi::ObjectWrap<GameBoy> {
         auto bytes = info[0].As<Napi::Uint8Array>();
         std::vector<gb::u8> ram(bytes.Data(), bytes.Data() + bytes.ByteLength());
         gameBoy_->bus().cartridge().loadRam(ram);
+    }
+
+    // Whatever the APU has synthesised since the last call, as interleaved
+    // stereo at gb::Apu::kSampleRate -- the same shape and the same 48kHz
+    // the mGBA and melonDS bridges produce, so one audio path serves all
+    // three consoles.
+    Napi::Value readAudio(const Napi::CallbackInfo& info) {
+        int capacity = info[0].As<Napi::Number>().Int32Value();
+        if (capacity <= 0) return Napi::Int16Array::New(info.Env(), 0);
+
+        std::vector<gb::i16> buffer(static_cast<std::size_t>(capacity) * 2);
+        const int frames = gameBoy_->readAudio(buffer.data(), capacity);
+        if (frames <= 0) return Napi::Int16Array::New(info.Env(), 0);
+
+        auto out = Napi::Int16Array::New(info.Env(), static_cast<size_t>(frames) * 2);
+        std::copy(buffer.begin(), buffer.begin() + frames * 2, out.Data());
+        return out;
+    }
+
+    Napi::Value audioSampleRate(const Napi::CallbackInfo& info) {
+        return Napi::Number::New(info.Env(), gb::Apu::kSampleRate);
     }
 
     // Constant for the DMG, but exposed per-instance so every core in this
