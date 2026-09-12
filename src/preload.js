@@ -71,11 +71,30 @@ function open(romPath) {
     }
   }
 
-  return { width: core.width, height: core.height };
+  // audioSampleRate is absent on a core with no APU -- core/gb doesn't
+  // implement one yet, so Game Boy is silent.
+  return { width: core.width, height: core.height, audioSampleRate: core.audioSampleRate || 0 };
 }
 
 setInterval(() => core && persistSave(), SAVE_INTERVAL_MS);
 window.addEventListener('beforeunload', () => core && persistSave());
+
+// Everything RomHack Hub, forwarded to the main process -- see src/hub.js
+// for why it lives there rather than here.
+contextBridge.exposeInMainWorld('hub', {
+  platforms: () => ipcRenderer.invoke('hub:platforms'),
+  files: (params) => ipcRenderer.invoke('hub:files', params),
+  cover: (url) => ipcRenderer.invoke('hub:cover', url),
+  download: (file) => ipcRenderer.invoke('hub:download', file),
+  updateCheck: () => ipcRenderer.invoke('hub:update-check'),
+  account: () => ipcRenderer.invoke('hub:account'),
+  login: (credentials) => ipcRenderer.invoke('hub:login', credentials),
+  totp: (challenge) => ipcRenderer.invoke('hub:totp', challenge),
+  logout: () => ipcRenderer.invoke('hub:logout'),
+  saves: () => ipcRenderer.invoke('hub:saves'),
+  uploadSave: (params) => ipcRenderer.invoke('hub:save-upload', params),
+  downloadSave: (params) => ipcRenderer.invoke('hub:save-download', params),
+});
 
 contextBridge.exposeInMainWorld('emu', {
   // Passed through from the main process's command line (see main.js), so
@@ -90,6 +109,7 @@ contextBridge.exposeInMainWorld('emu', {
     const ordinal = buttons[name];
     if (ordinal !== undefined) core.setButton(ordinal, pressed);
   },
+  readAudio: (frames) => (core.readAudio ? core.readAudio(frames) : new Int16Array(0)),
   // No-ops on the cores with no touch screen.
   touch: (x, y) => core.touch && core.touch(x, y),
   releaseTouch: () => core.releaseTouch && core.releaseTouch(),

@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "mgba/core/blip_buf.h"
 #include "mgba/core/core.h"
 #include "mgba-util/vfs.h"
 
@@ -22,6 +23,13 @@ namespace {
 // conversion below assumes 4 bytes per pixel.
 static_assert(sizeof(color_t) == 4, "expected a 32-bit colour build of mGBA");
 
+// mGBA's GBA core defaults both audio channels to 96000Hz (the
+// blip_set_rates calls in src/gba/audio.c) -- unusually high, and not what
+// a browser AudioContext wants. Every real mGBA frontend overrides it right
+// after creating the core; 48000 matches what melonDS outputs, so both
+// cores here feed the same audio graph.
+constexpr int kAudioSampleRateHz = 48000;
+
 class Gba : public Napi::ObjectWrap<Gba> {
    public:
     static Napi::Function define(Napi::Env env) {
@@ -30,6 +38,8 @@ class Gba : public Napi::ObjectWrap<Gba> {
                                InstanceMethod("runFrame", &Gba::runFrame),
                                InstanceMethod("frame", &Gba::frame),
                                InstanceMethod("setButton", &Gba::setButton),
+                               InstanceMethod("readAudio", &Gba::readAudio),
+                               InstanceAccessor("audioSampleRate", &Gba::audioSampleRate, nullptr),
                                InstanceAccessor("width", &Gba::width, nullptr),
                                InstanceAccessor("height", &Gba::height, nullptr),
                            });
@@ -99,6 +109,11 @@ class Gba : public Napi::ObjectWrap<Gba> {
         }
 
         core_->reset(core_);
+
+        core_->setAudioBufferSize(core_, 2048);
+        blip_set_rates(core_->getAudioChannel(core_, 0), core_->frequency(core_), kAudioSampleRateHz);
+        blip_set_rates(core_->getAudioChannel(core_, 1), core_->frequency(core_), kAudioSampleRateHz);
+
         loaded_ = true;
     }
 
@@ -150,6 +165,33 @@ class Gba : public Napi::ObjectWrap<Gba> {
         } else {
             core_->clearKeys(core_, bit);
         }
+    }
+
+    // Whatever mGBA has synthesised since the last call, as interleaved
+    // stereo s16 at kAudioSampleRateHz. mGBA keeps the two channels in
+    // separate blip_buf queues, so they are woven together here -- unlike
+    // melonDS, which already hands over interleaved output.
+    Napi::Value readAudio(const Napi::CallbackInfo& info) {
+        if (!ready(info.Env())) return info.Env().Undefined();
+
+        blip_t* left = core_->getAudioChannel(core_, 0);
+        blip_t* right = core_->getAudioChannel(core_, 1);
+
+        int capacity = info[0].As<Napi::Number>().Int32Value();
+        int frames = blip_samples_avail(left);
+        if (frames > capacity) frames = capacity;
+        if (frames <= 0) return Napi::Int16Array::New(info.Env(), 0);
+
+        auto out = Napi::Int16Array::New(info.Env(), static_cast<size_t>(frames) * 2);
+        // Stride 1 means "write every other slot", which interleaves the two
+        // reads into one buffer.
+        blip_read_samples(left, out.Data(), frames, 1);
+        blip_read_samples(right, out.Data() + 1, frames, 1);
+        return out;
+    }
+
+    Napi::Value audioSampleRate(const Napi::CallbackInfo& info) {
+        return Napi::Number::New(info.Env(), kAudioSampleRateHz);
     }
 
     Napi::Value width(const Napi::CallbackInfo& info) {

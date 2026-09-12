@@ -1,6 +1,8 @@
 const path = require('path');
 const { app, BrowserWindow, dialog, ipcMain } = require('electron');
 
+const hub = require('./hub');
+
 // A ROM given on the command line (double-clicking a .gb, or "Open with").
 // argv[0] is the executable itself.
 const romArgument = process.argv.slice(1).find((argument) => /\.(gbc?|gba|nds)$/i.test(argument));
@@ -25,6 +27,8 @@ ipcMain.handle('fit-window', (event, { width, height }) => {
 });
 
 app.whenReady().then(() => {
+  hub.register();
+
   const win = new BrowserWindow({
     width: 240 * 3,
     height: 160 * 3,

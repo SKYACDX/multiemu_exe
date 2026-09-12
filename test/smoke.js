@@ -10,6 +10,30 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+// Both consoles run at 59.7275Hz, so one emulated frame is worth this many
+// audio frames at 48kHz. What's asserted is the rate, not the content: the
+// synthetic ROMs here make no sound, and silence is still samples.
+const AUDIO_FRAMES_PER_FRAME = 48000 / 59.7275;
+
+function assertAudioRate(core, label) {
+  // Drain whatever earlier frames left queued, or it counts toward the
+  // window being measured.
+  while (core.readAudio(2048).length > 0) {
+    // keep draining
+  }
+
+  let frames = 0;
+  for (let i = 0; i < 20; i++) {
+    core.runFrame();
+    frames += core.readAudio(2048).length / 2;
+  }
+  const expected = AUDIO_FRAMES_PER_FRAME * 20;
+  assert.ok(
+    Math.abs(frames - expected) < expected * 0.05,
+    `${label}: got ${frames} audio frames over 20 emulated frames, expected about ${Math.round(expected)}`,
+  );
+}
+
 const gb = require('../build/Release/gb_addon.node');
 const gba = require('../build/Release/gba_addon.node');
 const ds = require('../build/Release/ds_addon.node');
@@ -85,6 +109,12 @@ assert.deepStrictEqual([...gbaFrame.slice(4, 8)], [0x00, 0x00, 0x00, 0xff], 'its
 
 assert.throws(() => new gba.Gba(new Uint8Array(1024)), /not a GBA ROM/);
 
+// Audio comes out at the console's frame rate times the output rate. Getting
+// this wrong is silent in the literal sense -- mGBA's own default is 96000Hz,
+// and a mismatch here plays everything at the wrong speed rather than failing.
+assert.strictEqual(advance.audioSampleRate, 48000);
+assertAudioRate(advance, 'GBA');
+
 // --- DS ----------------------------------------------------------------
 //
 // melonDS validates a cart far more loosely than mGBA does -- an empty file
@@ -114,5 +144,8 @@ assert.strictEqual(dsFrame.length, nintendoDs.width * nintendoDs.height * 4);
 for (let i = 3; i < dsFrame.length; i += 4) {
   assert.strictEqual(dsFrame[i], 0xff, `DS pixel ${(i - 3) / 4} is not opaque`);
 }
+
+assert.strictEqual(nintendoDs.audioSampleRate, 48000);
+assertAudioRate(nintendoDs, 'DS');
 
 console.log('smoke: ok');

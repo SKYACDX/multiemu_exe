@@ -5,6 +5,14 @@ const ctx = canvas.getContext('2d');
 
 let image = null;
 
+// Path of the ROM currently running, or null. hub.js reads it to know which
+// game a cloud save belongs to.
+let currentRom = null;
+
+function loadedRom() {
+  return currentRom;
+}
+
 // Both the DMG and the GBA run at 59.7275Hz, and emulation is paced against
 // that rather than tied to vsync: a core whose frame costs more than one
 // vsync interval can only start on an interval boundary, which quantises it
@@ -34,6 +42,10 @@ function loop() {
   let ran = 0;
   while (due <= now && ran < MAX_CATCHUP) {
     emu.runFrame();
+    // Drained every frame rather than in batches: the core's own audio
+    // queue is only a couple of thousand samples deep, and a frame fills
+    // about 800 of them.
+    audioPush(emu.readAudio(READ_FRAMES));
     due += FRAME_MS;
     ran++;
   }
@@ -68,6 +80,7 @@ for (const [type, pressed] of [['keydown', true], ['keyup', false]]) {
     const button = KEYS[event.key.toLowerCase()];
     if (button === undefined) return;
     event.preventDefault(); // arrows would scroll the page otherwise
+    audioResume();
     emu.setButton(button, pressed);
   });
 }
@@ -96,7 +109,10 @@ function sendTouch(event) {
   emu.touch(x, y - topScreenHeight);
 }
 
-canvas.addEventListener('mousedown', sendTouch);
+canvas.addEventListener('mousedown', (event) => {
+  audioResume();
+  sendTouch(event);
+});
 canvas.addEventListener('mousemove', (event) => {
   if (event.buttons & 1) sendTouch(event);
 });
@@ -104,7 +120,7 @@ canvas.addEventListener('mousemove', (event) => {
 // the stylus, or the game sees a permanently held touch.
 window.addEventListener('mouseup', () => emu.releaseTouch());
 
-function start(romPath) {
+function playRom(romPath) {
   let size;
   try {
     size = emu.open(romPath);
@@ -112,20 +128,22 @@ function start(romPath) {
     status.textContent = error.message;
     return;
   }
+  currentRom = romPath;
 
   canvas.width = size.width;
   canvas.height = size.height;
   image = ctx.createImageData(size.width, size.height);
+  audioStart(size.audioSampleRate);
 
   emu.fitWindow(size);
-  picker.hidden = true;
+  for (const panel of document.querySelectorAll('.panel')) panel.hidden = true;
   canvas.hidden = false;
   loop();
 }
 
 document.getElementById('open').addEventListener('click', async () => {
   const romPath = await emu.pickRom();
-  if (romPath) start(romPath);
+  if (romPath) playRom(romPath);
 });
 
-if (emu.initialRom) start(emu.initialRom);
+if (emu.initialRom) playRom(emu.initialRom);

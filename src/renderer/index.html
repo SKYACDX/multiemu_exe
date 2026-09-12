@@ -10,6 +10,9 @@
     font: 14px system-ui, sans-serif;
   }
   body { display: grid; place-items: center; }
+  /* .panel sets display:flex, which beats the browser's own
+     [hidden] { display: none } -- without this every panel shows at once. */
+  [hidden] { display: none !important; }
   #screen {
     cursor: crosshair; /* the bottom half is the DS touch screen */
     /* Absolute, not a grid item: inside the grid the row stayed auto-sized,
@@ -27,16 +30,136 @@
     object-fit: contain;
     image-rendering: pixelated;
   }
+
+  .panel {
+    width: min(640px, 92vw);
+    max-height: 92vh;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
   #picker { text-align: center; }
-  button { font: inherit; padding: 8px 16px; }
-  #status { color: #e06c5a; min-height: 1em; }
+  h1 { font-size: 20px; font-weight: 600; margin: 0; }
+  .muted { color: #8a8a8a; margin: 0; }
+
+  button {
+    font: inherit;
+    padding: 8px 16px;
+    color: #eee;
+    background: #2a2a2a;
+    border: 1px solid #3d3d3d;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  button:hover { background: #343434; }
+  button.primary { background: #2f6f4f; border-color: #3d8a63; }
+  button:disabled { opacity: 0.5; cursor: default; }
+
+  input, select {
+    font: inherit;
+    padding: 8px 10px;
+    color: #eee;
+    background: #1b1b1b;
+    border: 1px solid #3d3d3d;
+    border-radius: 6px;
+  }
+
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row > input[type="search"],
+  .row > input[type="email"],
+  .row > input[type="password"],
+  .row > input[type="text"] { flex: 1; }
+
+  #results, .saves {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  #results li, .saves li {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    padding: 8px;
+    background: #1b1b1b;
+    border: 1px solid #2a2a2a;
+    border-radius: 6px;
+  }
+  #results img { width: 36px; height: 36px; object-fit: cover; border-radius: 4px; background: #2a2a2a; }
+  .title { flex: 1; min-width: 0; }
+  .title strong { display: block; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .title span { color: #8a8a8a; font-size: 12px; }
+
+  #update {
+    padding: 10px 12px;
+    background: #263a52;
+    border: 1px solid #37506e;
+    border-radius: 6px;
+    text-align: left;
+  }
+  #update pre { margin: 6px 0 0; white-space: pre-wrap; font: inherit; color: #b9c8da; max-height: 8em; overflow-y: auto; }
+
+  #status { color: #e06c5a; min-height: 1em; margin: 0; }
 </style>
 
-<div id="picker">
-  <button id="open">Abrir ROM</button>
-  <p>Game Boy, Game Boy Color, Game Boy Advance o Nintendo DS</p>
+<div id="picker" class="panel">
+  <div id="update" hidden></div>
+  <h1>multiemu</h1>
+  <p class="muted">Game Boy, Game Boy Color, Game Boy Advance o Nintendo DS</p>
+  <div class="row" style="justify-content: center">
+    <button id="open" class="primary">Abrir ROM</button>
+    <button id="browse">Descargar juegos</button>
+    <button id="account-open">Cuenta</button>
+  </div>
   <p id="status"></p>
 </div>
+
+<div id="browser" class="panel" hidden>
+  <div class="row">
+    <button class="back">Volver</button>
+    <input type="search" id="search" placeholder="Buscar un juego" />
+    <select id="platform"><option value="">Todas</option></select>
+  </div>
+  <p id="browser-status" class="muted"></p>
+  <ul id="results"></ul>
+</div>
+
+<div id="account" class="panel" hidden>
+  <div class="row">
+    <button class="back">Volver</button>
+    <h1>Cuenta de RomHack Hub</h1>
+  </div>
+  <form id="login">
+    <div class="row"><input type="email" id="email" placeholder="Correo" required /></div>
+    <div class="row" style="margin-top: 8px">
+      <input type="password" id="password" placeholder="Contraseña" required />
+      <button type="submit" class="primary">Entrar</button>
+    </div>
+  </form>
+  <form id="totp" hidden>
+    <div class="row">
+      <input type="text" id="totp-code" placeholder="Código de dos factores" inputmode="numeric" />
+      <button type="submit" class="primary">Verificar</button>
+    </div>
+  </form>
+  <div id="session" hidden>
+    <div class="row">
+      <p class="muted" id="session-user" style="flex: 1"></p>
+      <button id="logout">Salir</button>
+    </div>
+    <div class="row" style="margin-top: 10px">
+      <button id="upload-save">Subir el guardado actual</button>
+    </div>
+    <ul class="saves" id="cloud-saves" style="margin-top: 10px"></ul>
+  </div>
+  <p id="account-status" class="muted"></p>
+</div>
+
 <canvas id="screen" hidden></canvas>
 
+<script src="audio.js"></script>
+<script src="hub.js"></script>
 <script src="renderer.js"></script>

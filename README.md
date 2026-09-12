@@ -93,3 +93,41 @@ equipo, casi el doble de tiempo real. Si alguna vez hiciera falta, el
 camino es compilar melonDS con clang-cl, que sí define las macros de
 arquitectura al estilo GCC y acepta el `__attribute__((packed))` de
 `TinyVector.h`, manteniendo compatibilidad de ABI con los addons de MSVC.
+
+### Por qué RomHack Hub vive en el proceso principal
+
+`src/shared.ts` empaqueta con esbuild el TypeScript del repo Android tal
+cual: los tres clientes de API, los parcheadores IPS/UPS/BPS, CRC32 y el
+descompresor. Es TypeScript plano sobre `fetch`, sin nada de React Native,
+así que el `.exe` y el móvil hablan con el backend por el mismo código.
+
+Se empaqueta para el **proceso principal**, no para la página, por dos
+razones concretas que costaron encontrarse:
+
+- Un renderer con origen `file://` manda `Origin: null`, y además Chromium
+  **no le deja cargar imágenes remotas** — las carátulas salían en blanco.
+  Por eso `hub:cover` las baja en el proceso principal y las devuelve como
+  `data:`.
+- El token de la cuenta no tiene por qué llegar nunca a la página. Se
+  guarda cifrado con `safeStorage`, que lo delega en el almacén del sistema
+  operativo; si no hay ninguno disponible, simplemente no se persiste.
+
+### Detalles del backend encontrados al conectar
+
+Ninguno bloquea, pero conviene que la sesión web los sepa:
+
+- `GET /api/v1/app/releases?platform=windows` **no filtra**: devuelve
+  también las releases de Android, y todas traen `platform: null`. Por eso
+  el aviso de versión exige que el campo diga `WINDOWS` y trata `null` como
+  "no es de esta plataforma": así una release de Android nunca se ofrece
+  como actualización del `.exe`, y el aviso empieza a funcionar solo en
+  cuanto el backend exponga el campo.
+- El catálogo de **HackRoms está vacío** (`/hacks` y `/games` devuelven 0).
+  Los parcheadores ya están empaquetados, así que la pantalla se añade el
+  día que haya contenido que mostrar.
+- `RomHackHubFile.platform` y `coverImageUrl` están tipados como
+  obligatorios pero llegan `null` en la práctica. La interfaz lo trata como
+  opcional.
+- El `API_BASE` del cliente compartido omite el `www`, así que cada llamada
+  se come un 308. Funciona (fetch sigue la redirección) pero se paga un
+  viaje de más.

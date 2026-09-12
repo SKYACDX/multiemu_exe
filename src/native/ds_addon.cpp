@@ -35,6 +35,11 @@ constexpr int kScreenHeight = 192;
 // top screen's height.
 constexpr int kStackedHeight = kScreenHeight * 2;
 
+// Must match NDSArgs::OutputSampleRate, which this build leaves at its
+// default (Args.h). Also what gba_addon.cpp resamples mGBA down to, so both
+// cores feed the same audio graph.
+constexpr double kAudioSampleRateHz = 48000.0;
+
 std::vector<u8> ReadWholeFile(const std::string& path) {
     FILE* f = fopen(path.c_str(), "rb");
     if (!f) return {};
@@ -77,6 +82,8 @@ class Ds : public Napi::ObjectWrap<Ds> {
                                InstanceMethod("setButton", &Ds::setButton),
                                InstanceMethod("touch", &Ds::touch),
                                InstanceMethod("releaseTouch", &Ds::releaseTouch),
+                               InstanceMethod("readAudio", &Ds::readAudio),
+                               InstanceAccessor("audioSampleRate", &Ds::audioSampleRate, nullptr),
                                InstanceAccessor("width", &Ds::width, nullptr),
                                InstanceAccessor("height", &Ds::height, nullptr),
                            });
@@ -213,6 +220,30 @@ class Ds : public Napi::ObjectWrap<Ds> {
     void releaseTouch(const Napi::CallbackInfo& info) {
         if (!ready(info.Env())) return;
         nds_->ReleaseScreen();
+    }
+
+    // SPU::ReadOutput already produces interleaved stereo s16 at
+    // NDSArgs::OutputSampleRate, so this is a straight passthrough --
+    // unlike mGBA, whose two channels live in separate queues.
+    Napi::Value readAudio(const Napi::CallbackInfo& info) {
+        if (!ready(info.Env())) return info.Env().Undefined();
+
+        int capacity = info[0].As<Napi::Number>().Int32Value();
+        int frames = nds_->SPU.GetOutputSize();
+        if (frames > capacity) frames = capacity;
+        if (frames <= 0) return Napi::Int16Array::New(info.Env(), 0);
+
+        auto out = Napi::Int16Array::New(info.Env(), static_cast<size_t>(frames) * 2);
+        const int read = nds_->SPU.ReadOutput(out.Data(), frames);
+        if (read == frames) return out;
+        // ReadOutput can come up short; hand back only what it filled.
+        auto trimmed = Napi::Int16Array::New(info.Env(), static_cast<size_t>(read) * 2);
+        if (read > 0) std::copy(out.Data(), out.Data() + read * 2, trimmed.Data());
+        return trimmed;
+    }
+
+    Napi::Value audioSampleRate(const Napi::CallbackInfo& info) {
+        return Napi::Number::New(info.Env(), static_cast<int>(kAudioSampleRateHz));
     }
 
     Napi::Value width(const Napi::CallbackInfo& info) {
