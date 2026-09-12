@@ -198,10 +198,19 @@ assertStateRoundTrip(nintendoDs, 'DS');
 // --- Release platform detection ----------------------------------------
 //
 // The update notice hangs on this, and the consequence of getting it wrong
-// is offering an Android APK as an update to the desktop app. The positive
-// case can't be checked against the live API until a Windows release is
-// actually published, so both directions are pinned here.
+// is offering an Android APK as an update to the desktop app. Both the
+// field and the fallbacks are pinned: the field arrived late once already,
+// and the fallbacks are what carried the check through that window.
 const shared = require('../build/shared.js');
+
+// The field the backend now serves takes priority, including when it
+// disagrees with what the filename suggests.
+assert.strictEqual(shared.isWindowsRelease({ platform: 'WINDOWS' }), true);
+assert.strictEqual(shared.isWindowsRelease({ platform: 'ANDROID' }), false);
+assert.strictEqual(
+  shared.isWindowsRelease({ platform: 'ANDROID', apkUrl: 'x?filename%3D%22a.exe%22' }),
+  false,
+);
 
 const androidRelease = {
   versionCode: 10,

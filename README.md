@@ -178,16 +178,19 @@ razones concretas que costaron encontrarse:
 
 Ninguno bloquea, pero conviene que la sesión web los sepa:
 
-- **Una release no trae campo `platform` en absoluto** — no es `null`, no
-  está — y el filtro `?platform=windows` que documenta la API no filtra.
-  El aviso de versión no lo espera: deduce la plataforma del nombre real
-  del fichero, que la URL firmada de descarga lleva en su
-  `content-disposition` (`multiemu-1.8.apk`), y si no hay nombre cae en
-  `minAndroidSdk`, que según la propia documentación se omite en una
-  release de Windows. Ante la duda, «no es mía»: una release de Android
-  nunca puede ofrecerse como actualización del `.exe`. Verificado contra
-  las 10 releases publicadas, y las dos direcciones fijadas en el test.
-  Si algún día el backend expone `platform`, esto se puede simplificar.
+- **`platform` ya funciona** (desde el 2026-09-12): las releases lo traen,
+  `?platform=windows` filtra, y `GET /api/v1/app` sigue resolviendo
+  `latestRelease` como la última de Android — o sea que publicar el `.exe`
+  no dispara el aviso de actualización en los móviles. Comprobado en vivo
+  antes y después de publicar.
+
+  El aviso de versión usa ese campo, pero conserva un respaldo que dedujo
+  la plataforma del nombre real del fichero (que la URL firmada lleva en su
+  `content-disposition`) y de `minAndroidSdk`. No es paranoia: el campo se
+  especificó y se fusionó días antes de llegar de verdad a producción, y
+  durante esa ventana ninguna release lo traía. Ante la duda, «no es mía»:
+  una release de Android nunca puede ofrecerse como actualización del
+  `.exe`.
 - El catálogo de **HackRoms está vacío** (`/hacks` y `/games` devuelven 0).
   Los parcheadores ya están empaquetados, así que la pantalla se añade el
   día que haya contenido que mostrar.
