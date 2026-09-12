@@ -44,3 +44,25 @@ export async function listAppReleases(params: {
   }
   return response.json();
 }
+
+/**
+ * Which platform a release is for.
+ *
+ * The API has no `platform` field on a release at all -- not null, absent --
+ * and its documented `?platform=` filter does not filter, so this reads the
+ * two signals that are actually there:
+ *
+ *   - the real filename, which the signed download URL carries in its
+ *     content-disposition (multiemu-1.8.apk);
+ *   - minAndroidSdk, which docs/app-listing-api.md says is omitted for a
+ *     Windows release and is 24 on every Android one published so far.
+ *
+ * Guessing wrong in the safe direction matters more than being clever: a
+ * release that looks like neither is treated as not Windows, so an Android
+ * build can never offer itself as an update to the desktop app.
+ */
+export function isWindowsRelease(release: AppRelease): boolean {
+  const filename = /filename%3D%22([^%]+)%22/i.exec(release.apkUrl || '')?.[1];
+  if (filename) return filename.toLowerCase().endsWith('.exe');
+  return release.minAndroidSdk === null || release.minAndroidSdk === undefined;
+}

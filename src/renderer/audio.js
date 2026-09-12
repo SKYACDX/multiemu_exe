@@ -35,8 +35,45 @@ function audioResume() {
   if (context && context.state === 'suspended') context.resume();
 }
 
-function audioPush(samples) {
-  if (!context || samples.length === 0) return;
+// Off normal speed the core produces the wrong number of samples for the
+// time they are going to occupy: at 4x, four seconds of game audio arrive
+// in one second of wall clock. Squeezing them into the output rate is what
+// makes fast-forward sound sped up -- the chipmunk effect every emulator
+// has -- and stretching them does the opposite below 1x.
+//
+// Each output frame averages the input frames that fall inside it, rather
+// than picking one, which keeps speeding up from sounding gritty. Below 1x
+// that window is shorter than a frame and this falls back to repeating the
+// nearest one, which is what stretching needs.
+function resample(samples, ratio) {
+  if (ratio === 1) return samples;
+
+  const inFrames = samples.length / 2;
+  const outFrames = Math.max(1, Math.round(inFrames / ratio));
+  const out = new Int16Array(outFrames * 2);
+
+  for (let j = 0; j < outFrames; j++) {
+    const first = Math.floor(j * ratio);
+    const last = Math.min(inFrames, Math.max(first + 1, Math.ceil(j * ratio + ratio)));
+
+    let left = 0;
+    let right = 0;
+    let counted = 0;
+    for (let i = first; i < last; i++) {
+      left += samples[i * 2];
+      right += samples[i * 2 + 1];
+      counted++;
+    }
+    if (!counted) continue;
+    out[j * 2] = left / counted;
+    out[j * 2 + 1] = right / counted;
+  }
+  return out;
+}
+
+function audioPush(rawSamples, ratio = 1) {
+  if (!context || rawSamples.length === 0) return;
+  const samples = resample(rawSamples, ratio);
 
   const now = context.currentTime;
   // Running ahead of real time: dropping the chunk is better than letting

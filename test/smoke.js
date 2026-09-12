@@ -195,6 +195,33 @@ assert.strictEqual(nintendoDs.audioSampleRate, 48000);
 assertAudioRate(nintendoDs, 'DS');
 assertStateRoundTrip(nintendoDs, 'DS');
 
+// --- Release platform detection ----------------------------------------
+//
+// The update notice hangs on this, and the consequence of getting it wrong
+// is offering an Android APK as an update to the desktop app. The positive
+// case can't be checked against the live API until a Windows release is
+// actually published, so both directions are pinned here.
+const shared = require('../build/shared.js');
+
+const androidRelease = {
+  versionCode: 10,
+  minAndroidSdk: 24,
+  apkUrl: 'https://example/x?response-content-disposition=attachment%3B%20filename%3D%22multiemu-1.8.apk%22&x-id=GetObject',
+};
+const windowsRelease = {
+  versionCode: 11,
+  minAndroidSdk: null,
+  apkUrl: 'https://example/x?response-content-disposition=attachment%3B%20filename%3D%22multiemu-1.0.exe%22&x-id=GetObject',
+};
+
+assert.strictEqual(shared.isWindowsRelease(androidRelease), false);
+assert.strictEqual(shared.isWindowsRelease(windowsRelease), true);
+
+// No filename to read: fall back to minAndroidSdk, and treat anything that
+// looks like neither as not ours.
+assert.strictEqual(shared.isWindowsRelease({ apkUrl: null, minAndroidSdk: 24 }), false);
+assert.strictEqual(shared.isWindowsRelease({ apkUrl: null, minAndroidSdk: null }), true);
+
 // --- Encoding ----------------------------------------------------------
 //
 // Every string the user sees is Spanish, and an editor or a script writing

@@ -83,13 +83,9 @@ function loop(token) {
 
     // Drained every frame rather than in batches: the core's own audio
     // queue is only a couple of thousand samples deep, and a frame fills
-    // about 800 of them. Off normal speed the samples are read and thrown
-    // away -- the core has to be drained either way, but feeding twice as
-    // many into a 48kHz output without resampling just makes the queue
-    // overrun and stutter. Silence is the honest answer until there is a
-    // resampler.
-    const samples = emu.readAudio(READ_FRAMES);
-    if (speed === 1) audioPush(samples);
+    // about 800 of them. audio.js resamples by the speed, so fast-forward
+    // sounds sped up instead of going silent.
+    audioPush(emu.readAudio(READ_FRAMES), speed);
 
     due += FRAME_MS / speed;
     ran++;

@@ -127,6 +127,8 @@ contextBridge.exposeInMainWorld('hub', {
   cover: (url) => ipcRenderer.invoke('hub:cover', url),
   download: (file) => ipcRenderer.invoke('hub:download', file),
   updateCheck: () => ipcRenderer.invoke('hub:update-check'),
+  openDownload: () => ipcRenderer.invoke('hub:open-download'),
+  notifyUpdate: (version) => ipcRenderer.invoke('hub:notify-update', version),
   account: () => ipcRenderer.invoke('hub:account'),
   login: (credentials) => ipcRenderer.invoke('hub:login', credentials),
   totp: (challenge) => ipcRenderer.invoke('hub:totp', challenge),

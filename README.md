@@ -39,14 +39,21 @@ por separado, botón a botón. Ahí mismo se elige si las dos pantallas del DS
 salen **una sobre otra** o **lado a lado**; en las dos, la pantalla táctil
 es la segunda y se usa con el ratón.
 
+Al arrancar comprueba si hay una versión nueva para Windows. Si la hay,
+sale una barra arriba de la ventana — visible también jugando, no solo en
+el menú — más una notificación del sistema. «Ocultar» la calla hasta que
+salga una más nueva. El botón lleva a la página de descarga y no al fichero
+directo, porque la URL firmada caduca a los cinco minutos.
+
 `Esc` durante el juego abre el **menú de pausa**, que es donde está todo lo
 que hace falta sin cerrar la partida: velocidad (0,5x a 4x, con la
 velocidad real medida en fps), guardar y cargar estado con la fecha del
 último, los guardados en la nube de ese juego concreto, los mismos
 controles y pantallas, y salir al menú.
 
-Fuera de 1x el sonido se silencia: acelerar sin remuestrear sonaría
-entrecortado, y eso es peor que el silencio.
+Fuera de 1x el sonido se acelera con el juego y sube o baja de tono, como
+en cualquier emulador: `audio.js` remuestrea las muestras que el núcleo
+produce de más (o de menos) al ritmo de salida.
 
 Las asignaciones y el diseño viven en `settings.json` dentro de la carpeta
 de datos de la app, junto a los guardados — un JSON normal, editable a mano
@@ -174,12 +181,16 @@ razones concretas que costaron encontrarse:
 
 Ninguno bloquea, pero conviene que la sesión web los sepa:
 
-- `GET /api/v1/app/releases?platform=windows` **no filtra**: devuelve
-  también las releases de Android, y todas traen `platform: null`. Por eso
-  el aviso de versión exige que el campo diga `WINDOWS` y trata `null` como
-  "no es de esta plataforma": así una release de Android nunca se ofrece
-  como actualización del `.exe`, y el aviso empieza a funcionar solo en
-  cuanto el backend exponga el campo.
+- **Una release no trae campo `platform` en absoluto** — no es `null`, no
+  está — y el filtro `?platform=windows` que documenta la API no filtra.
+  El aviso de versión no lo espera: deduce la plataforma del nombre real
+  del fichero, que la URL firmada de descarga lleva en su
+  `content-disposition` (`multiemu-1.8.apk`), y si no hay nombre cae en
+  `minAndroidSdk`, que según la propia documentación se omite en una
+  release de Windows. Ante la duda, «no es mía»: una release de Android
+  nunca puede ofrecerse como actualización del `.exe`. Verificado contra
+  las 10 releases publicadas, y las dos direcciones fijadas en el test.
+  Si algún día el backend expone `platform`, esto se puede simplificar.
 - El catálogo de **HackRoms está vacío** (`/hacks` y `/games` devuelven 0).
   Los parcheadores ya están empaquetados, así que la pantalla se añade el
   día que haya contenido que mostrar.

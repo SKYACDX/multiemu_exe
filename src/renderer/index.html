@@ -119,14 +119,31 @@
   .title strong { display: block; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .title span { color: #8a8a8a; font-size: 12px; }
 
+  /* Fixed to the top of the window rather than living inside the main
+     menu: an update is worth seeing while a game is running too. */
   #update {
-    padding: 10px 12px;
-    background: #263a52;
-    border: 1px solid #37506e;
-    border-radius: 6px;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 2;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    padding: 10px 14px;
+    background: #263a52f2;
+    border-bottom: 1px solid #37506e;
     text-align: left;
   }
-  #update pre { margin: 6px 0 0; white-space: pre-wrap; font: inherit; color: #b9c8da; max-height: 8em; overflow-y: auto; }
+  #update .title { flex: 1; }
+  #update-changelog {
+    margin: 4px 0 0;
+    white-space: pre-wrap;
+    font: inherit;
+    color: #b9c8da;
+    max-height: 6em;
+    overflow-y: auto;
+  }
 
   #status { color: #e06c5a; min-height: 1em; margin: 0; }
 
@@ -144,8 +161,16 @@
   }
 </style>
 
+<div id="update" hidden>
+  <div class="title">
+    <strong id="update-title"></strong>
+    <pre id="update-changelog"></pre>
+  </div>
+  <button id="update-download" class="primary">Descargar</button>
+  <button id="update-dismiss">Ocultar</button>
+</div>
+
 <div id="picker" class="panel">
-  <div id="update" hidden></div>
   <h1>multiemu</h1>
   <p class="muted">Game Boy, Game Boy Color, Game Boy Advance o Nintendo DS</p>
   <div class="row" style="justify-content: center">
@@ -186,7 +211,7 @@
     </select>
   </div>
   <p id="fps" class="muted"></p>
-  <p id="speed-note" class="muted">Fuera de 1x el sonido se silencia: acelerarlo sin remuestrear sonaría entrecortado.</p>
+  <p id="speed-note" class="muted">El sonido se acelera con el juego, así que sube o baja de tono.</p>
 
   <h1 style="font-size: 16px">Estado guardado</h1>
   <p id="state-info" class="muted"></p>

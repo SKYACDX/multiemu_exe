@@ -16,7 +16,11 @@ for (const back of document.querySelectorAll('.back')) {
   back.addEventListener('click', () => show(loadedRom() ? 'pause' : 'picker'));
 }
 
-// ---- Update banner ----------------------------------------------------
+// ---- Update notice ----------------------------------------------------
+//
+// Checked once at startup. The bar sits at the top of the window, over
+// whatever is on screen, so it is visible mid-game and not only on the
+// main menu -- the point is that nobody has to go looking.
 
 async function checkForUpdate() {
   let release;
@@ -27,13 +31,26 @@ async function checkForUpdate() {
   }
   if (!release) return;
 
-  const banner = document.getElementById('update');
-  banner.hidden = false;
-  banner.replaceChildren(
-    element('strong', `Hay una versión nueva: ${release.version}`),
-    element('pre', release.changelog || ''),
-  );
+  // Hidden for good once dismissed, until a newer one comes along.
+  const stored = settings.read();
+  if (stored.dismissedUpdate >= release.versionCode) return;
+
+  document.getElementById('update-title').textContent =
+    `multiemu ${release.version} ya está disponible`;
+  document.getElementById('update-changelog').textContent = release.changelog || '';
+  document.getElementById('update').hidden = false;
+
+  // Also as a real desktop notification, so it lands even with the window
+  // behind something else.
+  hub.notifyUpdate(release.version);
+
+  document.getElementById('update-dismiss').addEventListener('click', () => {
+    document.getElementById('update').hidden = true;
+    settings.write({ ...settings.read(), dismissedUpdate: release.versionCode });
+  });
 }
+
+document.getElementById('update-download').addEventListener('click', () => hub.openDownload());
 
 // ---- Catalogue --------------------------------------------------------
 

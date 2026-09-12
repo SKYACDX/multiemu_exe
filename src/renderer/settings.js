@@ -75,7 +75,10 @@ function rebuildLookups() {
 }
 
 function persist() {
-  settings.write({ bindings, dsLayout, speed });
+  // Spread what is already there: this file is not the only writer --
+  // hub.js records a dismissed update in it too, and rewriting only these
+  // three keys would silently drop that.
+  settings.write({ ...settings.read(), bindings, dsLayout, speed });
 }
 
 rebuildLookups();

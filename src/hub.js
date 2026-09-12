@@ -8,7 +8,7 @@
 // stored, and the IPC surface.
 const fs = require('fs');
 const path = require('path');
-const { app, ipcMain, safeStorage } = require('electron');
+const { Notification, app, ipcMain, safeStorage, shell } = require('electron');
 
 const shared = require('../build/shared.js');
 
@@ -17,6 +17,8 @@ const shared = require('../build/shared.js');
 // first Windows release is 11 (see docs/app-listing-api.md in the shared
 // repo). Bump it on every published release.
 const VERSION_CODE = 11;
+
+const DOWNLOAD_PAGE = 'https://www.emulatornds.online/app';
 
 // ROM extensions this app can actually boot, in the order worth preferring
 // when a downloaded archive holds more than one.
@@ -132,17 +134,24 @@ function register() {
 
   // A newer release for THIS platform, or null.
   ipcMain.handle('hub:update-check', async () => {
-    const { releases } = await shared.listAppReleases({ platform: 'windows', limit: 10 });
-    const newer = releases.find(
-      // The platform filter is applied again here rather than trusted: the
-      // query parameter is accepted but does not filter today, and existing
-      // releases report platform as null. An unlabelled release is treated
-      // as "not ours" so an Android build never offers itself as a Windows
-      // update -- which also means this stays quiet until the backend
-      // starts reporting the field, with no change needed here.
-      (release) => String(release.platform).toUpperCase() === 'WINDOWS' && release.versionCode > VERSION_CODE,
-    );
-    return newer ?? null;
+    const { releases } = await shared.listAppReleases({ limit: 20 });
+    return releases.find((release) => release.versionCode > VERSION_CODE && shared.isWindowsRelease(release)) ?? null;
+  });
+
+  // The signed download URL in a release expires in five minutes, so the
+  // button opens the download page instead of the file: whatever the user
+  // clicks there is current no matter how long the notice sat on screen.
+  ipcMain.handle('hub:open-download', () => shell.openExternal(DOWNLOAD_PAGE));
+
+  ipcMain.handle('hub:notify-update', (event, version) => {
+    if (!Notification.isSupported()) return false;
+    const notification = new Notification({
+      title: 'multiemu ' + version + ' disponible',
+      body: 'Haz clic para ir a la página de descarga.',
+    });
+    notification.on('click', () => shell.openExternal(DOWNLOAD_PAGE));
+    notification.show();
+    return true;
   });
 
   ipcMain.handle('hub:account', () => (token ? { username } : null));
