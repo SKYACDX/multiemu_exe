@@ -39,7 +39,8 @@ por separado, botón a botón. Ahí mismo se elige si las dos pantallas del DS
 salen **una sobre otra** o **lado a lado**; en las dos, la pantalla táctil
 es la segunda y se usa con el ratón.
 
-Al arrancar comprueba si hay una versión nueva para Windows. Si la hay,
+Comprueba si hay una versión nueva para Windows al arrancar y cada dos
+horas, para que una sesión larga también se entere. Si la hay,
 sale una barra arriba de la ventana — visible también jugando, no solo en
 el menú — más una notificación del sistema. «Ocultar» la calla hasta que
 salga una más nueva. El botón lleva a la página de descarga y no al fichero

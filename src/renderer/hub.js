@@ -18,9 +18,18 @@ for (const back of document.querySelectorAll('.back')) {
 
 // ---- Update notice ----------------------------------------------------
 //
-// Checked once at startup. The bar sits at the top of the window, over
-// whatever is on screen, so it is visible mid-game and not only on the
-// main menu -- the point is that nobody has to go looking.
+// Checked at startup and then every few hours, so a session that stays open
+// for a day still finds out. The bar sits at the top of the window, over
+// whatever is on screen, so it is visible mid-game and not only on the main
+// menu -- the point is that nobody has to go looking.
+
+// Long enough that it is nearly free (one small request), short enough that
+// someone who leaves the app open all day hears about a release the same
+// day. A session shorter than this is covered by the check at startup.
+const UPDATE_CHECK_INTERVAL_MS = 2 * 60 * 60 * 1000;
+
+const updateBar = document.getElementById('update');
+let pendingUpdate = null;
 
 async function checkForUpdate() {
   let release;
@@ -31,26 +40,35 @@ async function checkForUpdate() {
   }
   if (!release) return;
 
-  // Hidden for good once dismissed, until a newer one comes along.
-  const stored = settings.read();
-  if (stored.dismissedUpdate >= release.versionCode) return;
+  // Already showing this one, so don't notify again on the next round.
+  if (pendingUpdate && pendingUpdate.versionCode === release.versionCode) return;
 
+  // Hidden for good once dismissed, until a newer one comes along.
+  if (settings.read().dismissedUpdate >= release.versionCode) return;
+
+  pendingUpdate = release;
   document.getElementById('update-title').textContent =
     `multiemu ${release.version} ya está disponible`;
   document.getElementById('update-changelog').textContent = release.changelog || '';
-  document.getElementById('update').hidden = false;
+  updateBar.hidden = false;
 
   // Also as a real desktop notification, so it lands even with the window
   // behind something else.
   hub.notifyUpdate(release.version);
-
-  document.getElementById('update-dismiss').addEventListener('click', () => {
-    document.getElementById('update').hidden = true;
-    settings.write({ ...settings.read(), dismissedUpdate: release.versionCode });
-  });
 }
 
+// Registered once, not per check: doing it inside checkForUpdate would stack
+// a new listener every couple of hours.
+document.getElementById('update-dismiss').addEventListener('click', () => {
+  updateBar.hidden = true;
+  if (pendingUpdate) {
+    settings.write({ ...settings.read(), dismissedUpdate: pendingUpdate.versionCode });
+  }
+});
+
 document.getElementById('update-download').addEventListener('click', () => hub.openDownload());
+
+setInterval(checkForUpdate, UPDATE_CHECK_INTERVAL_MS);
 
 // ---- Catalogue --------------------------------------------------------
 
