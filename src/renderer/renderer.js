@@ -23,12 +23,29 @@ function loadedRom() {
 // before it was found -- see docs/desktop-port-handoff.md section 6).
 const FRAME_MS = 1000 / 59.7275;
 
-// Frames to run back-to-back when catching up before writing off the rest of
-// the lost time. Without a ceiling, one long stall snowballs into a run of
-// hundreds of frames and the window stops responding.
+// Frames of debt to work off in one go before writing the rest off. Without
+// a ceiling, one long stall snowballs into a run of hundreds of frames and
+// the window stops responding.
+//
+// It scales with speed so it always means the same thing -- four display
+// frames' worth. At 4x a fixed ceiling of four would force the loop to wake
+// every 4ms to keep up, which is exactly where Chromium clamps nested
+// timers, so the speed would quietly fall short of what was asked for.
 const MAX_CATCHUP = 4;
 
 let due = 0;
+
+// Frames actually emulated per second, sampled once a second. Asking for 4x
+// is not the same as getting it -- the loop is single-threaded and shares
+// the thread with drawing -- so the pause menu reports what is really
+// happening rather than what was requested.
+let framesThisSecond = 0;
+let secondStartedAt = 0;
+let measuredFps = 0;
+
+// A paused game stays on screen with the menu over it, rather than being
+// torn down: resuming has to be instant and keep the save RAM untouched.
+let paused = false;
 
 // Bumped every time a game starts or stops, so a setTimeout left over from
 // the previous game stops itself instead of running a second emulation loop
@@ -58,17 +75,34 @@ function loop(token) {
   const now = performance.now();
   if (due === 0) due = now;
 
+  const catchUpLimit = MAX_CATCHUP * speed;
+
   let ran = 0;
-  while (due <= now && ran < MAX_CATCHUP) {
+  while (due <= now && ran < catchUpLimit) {
     emu.runFrame();
+
     // Drained every frame rather than in batches: the core's own audio
     // queue is only a couple of thousand samples deep, and a frame fills
-    // about 800 of them.
-    audioPush(emu.readAudio(READ_FRAMES));
-    due += FRAME_MS;
+    // about 800 of them. Off normal speed the samples are read and thrown
+    // away -- the core has to be drained either way, but feeding twice as
+    // many into a 48kHz output without resampling just makes the queue
+    // overrun and stutter. Silence is the honest answer until there is a
+    // resampler.
+    const samples = emu.readAudio(READ_FRAMES);
+    if (speed === 1) audioPush(samples);
+
+    due += FRAME_MS / speed;
     ran++;
   }
   if (due <= now) due = now; // too far behind to catch up; drop the debt
+
+  framesThisSecond += ran;
+  if (secondStartedAt === 0) secondStartedAt = now;
+  if (now - secondStartedAt >= 1000) {
+    measuredFps = Math.round((framesThisSecond * 1000) / (now - secondStartedAt));
+    framesThisSecond = 0;
+    secondStartedAt = now;
+  }
 
   if (ran > 0) {
     pollGamepad();
@@ -77,25 +111,19 @@ function loop(token) {
   setTimeout(() => loop(token), Math.max(0, due - performance.now()));
 }
 
-// Key -> button name. The preload maps names to each core's own ordinals,
-// which differ per console. A button the loaded core doesn't have (L/R on
-// Game Boy, X/Y on anything but the DS) is simply ignored there.
-// Keys are lowercased before lookup so holding Shift (Select) doesn't turn
-// 'x' into 'X' and drop the A button.
-const KEYS = {
-  arrowright: 'right',
-  arrowleft: 'left',
-  arrowup: 'up',
-  arrowdown: 'down',
-  x: 'a',
-  z: 'b',
-  s: 'x',
-  a: 'y',
-  q: 'l',
-  w: 'r',
-  shift: 'select',
-  enter: 'start',
-};
+// True while the user is typing into a form control. The emulator has no
+// business claiming keys there: Q, W, A, S, Z and X are all bound to
+// buttons by default, so without this the login form and the catalogue
+// search box silently swallow half the alphabet.
+function typingInAField(event) {
+  const target = event.target;
+  return (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement ||
+    (target instanceof HTMLElement && target.isContentEditable)
+  );
+}
 
 const toastElement = document.getElementById('toast');
 let toastTimer = null;
@@ -109,22 +137,35 @@ function toast(text) {
   }, 2000);
 }
 
-// Save state on F5, restore on F8 -- kept out of KEYS because they are the
-// emulator's own controls, not the console's.
-window.addEventListener('keydown', (event) => {
-  if (event.key !== 'F5' && event.key !== 'F8') return;
-  event.preventDefault();
-  const saving = event.key === 'F5';
+// Save state on F5, restore on F8 -- shortcuts for what the pause menu also
+// offers, kept out of the bindings because they are the emulator's own
+// controls, not the console's.
+function saveOrLoadState(saving) {
   if (!(saving ? emu.saveState() : emu.loadState())) {
     toast(saving ? 'Este núcleo no guarda estados' : 'No hay ningún estado guardado');
-    return;
+    return false;
   }
   toast(saving ? 'Estado guardado' : 'Estado cargado');
+  return true;
+}
+
+window.addEventListener('keydown', (event) => {
+  if (!currentRom || (event.key !== 'F5' && event.key !== 'F8')) return;
+  event.preventDefault();
+  saveOrLoadState(event.key === 'F5');
 });
 
+// keyToButton lives in settings.js, which owns the bindings and the screen
+// that edits them. Keys are lowercased there too, so holding Shift (Select)
+// doesn't turn 'x' into 'X' and drop the A button.
 for (const [type, pressed] of [['keydown', true], ['keyup', false]]) {
   window.addEventListener(type, (event) => {
-    const button = KEYS[event.key.toLowerCase()];
+    // No game means there is no core to talk to, a paused game should not
+    // move, a rebind in progress is claiming this keypress, and a focused
+    // field owns it outright.
+    if (!currentRom || paused || isCapturing() || typingInAField(event)) return;
+
+    const button = keyToButton[event.key.toLowerCase()];
     if (button === undefined) return;
     event.preventDefault(); // arrows would scroll the page otherwise
     audioResume();
@@ -148,11 +189,9 @@ const PAD_NAMES = ['up', 'down', 'left', 'right', 'a', 'b', 'x', 'y', 'l', 'r', 
 const padState = {};
 
 function pollGamepad() {
-  // A rebind in progress wants the next button press for itself.
-  if (isCapturing()) {
-    pollCapture();
-    return;
-  }
+  // No core to talk to, or a rebind is claiming the next button press --
+  // settings.js polls for that one itself.
+  if (!currentRom || paused || isCapturing()) return;
 
   const pad = navigator.getGamepads().find((candidate) => candidate && candidate.connected);
   if (!pad) return;
@@ -258,17 +297,83 @@ function playRom(romPath) {
 function stopGame() {
   if (!currentRom) return;
   loopToken++;  // any pending timer now belongs to a dead game
+  paused = false;
   currentRom = null;
   emu.close();
   audioStop();
   canvas.hidden = true;
-  picker.hidden = false;
+  show('picker');
 }
 
+function pauseGame() {
+  if (!currentRom || paused) return;
+  paused = true;
+  loopToken++;  // stops the loop without tearing anything down
+  refreshPauseMenu();
+  show('pause');
+}
+
+function resumeGame() {
+  if (!paused) return;
+  paused = false;
+  secondStartedAt = 0;
+  framesThisSecond = 0;
+  for (const panel of document.querySelectorAll('.panel')) panel.hidden = true;
+  due = 0;  // the clock moved on while paused; don't try to catch up on it
+  loop(++loopToken);
+}
+
+// Escape opens the pause menu rather than quitting outright -- quitting is
+// one of the things the menu offers, and it is the destructive one.
 window.addEventListener('keydown', (event) => {
-  if (event.key !== 'Escape') return;
+  if (event.key !== 'Escape' || !currentRom || isCapturing()) return;
   event.preventDefault();
-  stopGame();
+  if (paused) {
+    resumeGame();
+  } else {
+    pauseGame();
+  }
+});
+
+function refreshPauseMenu() {
+  const info = emu.stateInfo();
+  document.getElementById('state-info').textContent = !info.supported
+    ? 'Este núcleo todavía no guarda estados.'
+    : info.savedAt
+      ? `Guardado el ${new Date(info.savedAt).toLocaleString()}`
+      : 'Todavía no has guardado ninguno.';
+
+  document.getElementById('save-state').disabled = !info.supported;
+  document.getElementById('load-state').disabled = !info.supported || !info.savedAt;
+  document.getElementById('speed').value = String(speed);
+  document.getElementById('speed-note').hidden = speed === 1;
+  document.getElementById('fps').textContent = measuredFps
+    ? `Va a ${measuredFps} fps, ${(measuredFps / 59.7275).toFixed(1)}x de la velocidad real.`
+    : '';
+}
+
+document.getElementById('resume').addEventListener('click', resumeGame);
+document.getElementById('quit').addEventListener('click', stopGame);
+
+document.getElementById('save-state').addEventListener('click', () => {
+  if (saveOrLoadState(true)) refreshPauseMenu();
+});
+
+document.getElementById('load-state').addEventListener('click', () => {
+  if (saveOrLoadState(false)) resumeGame();
+});
+
+document.getElementById('speed').addEventListener('change', (event) => {
+  setSpeed(Number(event.target.value));
+  document.getElementById('speed-note').hidden = speed === 1;
+});
+
+document.getElementById('pause-settings').addEventListener('click', () => {
+  document.getElementById('settings-open').click();
+});
+
+document.getElementById('pause-cloud').addEventListener('click', () => {
+  document.getElementById('account-open').click();
 });
 
 document.getElementById('open').addEventListener('click', async () => {

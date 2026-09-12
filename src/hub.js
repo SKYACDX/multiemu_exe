@@ -61,6 +61,15 @@ function restoreToken() {
   }
 }
 
+// The cloud key is the ROM's CRC32, not its filename: that is how the
+// Android app names its own save files, so the same cartridge lines up
+// across devices no matter what the file was called when it was downloaded.
+// The local sidecar .sav keeps using the ROM's name, which is the
+// predictable thing on a desktop.
+function gameKey(romPath) {
+  return shared.crc32(new Uint8Array(fs.readFileSync(romPath))).toString(16).padStart(8, '0');
+}
+
 function requireToken() {
   if (!token) throw new Error('No has iniciado sesión');
   return token;
@@ -163,16 +172,15 @@ function register() {
 
   ipcMain.handle('hub:saves', () => shared.listCloudSaves(requireToken()));
 
-  // The cloud key is the ROM's CRC32, not its filename: that is how the
-  // Android app names its own save files, so the same cartridge lines up
-  // across devices no matter what the file was called when it was
-  // downloaded. The local sidecar .sav keeps using the ROM's name, which is
-  // the predictable thing on a desktop.
+  // The same key uploads use, so the account screen can show just the saves
+  // belonging to the game that is open.
+  ipcMain.handle('hub:game-key', (event, romPath) => gameKey(romPath));
+
   ipcMain.handle('hub:save-upload', async (event, { romPath, savePath, slot }) => {
     if (!fs.existsSync(savePath)) {
       throw new Error('Este juego todavía no ha guardado nada');
     }
-    const key = shared.crc32(new Uint8Array(fs.readFileSync(romPath))).toString(16).padStart(8, '0');
+    const key = gameKey(romPath);
     const bytes = new Uint8Array(fs.readFileSync(savePath));
     await shared.uploadCloudSave(requireToken(), key, slot ?? 0, bytes, path.basename(savePath));
     return key;

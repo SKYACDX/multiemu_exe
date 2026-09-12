@@ -39,6 +39,15 @@ por separado, botón a botón. Ahí mismo se elige si las dos pantallas del DS
 salen **una sobre otra** o **lado a lado**; en las dos, la pantalla táctil
 es la segunda y se usa con el ratón.
 
+`Esc` durante el juego abre el **menú de pausa**, que es donde está todo lo
+que hace falta sin cerrar la partida: velocidad (0,5x a 4x, con la
+velocidad real medida en fps), guardar y cargar estado con la fecha del
+último, los guardados en la nube de ese juego concreto, los mismos
+controles y pantallas, y salir al menú.
+
+Fuera de 1x el sonido se silencia: acelerar sin remuestrear sonaría
+entrecortado, y eso es peor que el silencio.
+
 Las asignaciones y el diseño viven en `settings.json` dentro de la carpeta
 de datos de la app, junto a los guardados — un JSON normal, editable a mano
 si hace falta.

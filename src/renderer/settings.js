@@ -45,9 +45,20 @@ const DEFAULT_BINDINGS = {
 
 const DEFAULT_DS_LAYOUT = 'vertical';
 
+// Anything else in the file is ignored rather than trusted -- a speed of 0
+// would stall the emulation loop outright.
+const SPEEDS = [0.5, 1, 2, 4];
+
 let stored = settings.read();
 let bindings = { ...DEFAULT_BINDINGS, ...(stored.bindings || {}) };
 let dsLayout = stored.dsLayout === 'horizontal' ? 'horizontal' : DEFAULT_DS_LAYOUT;
+let speed = SPEEDS.includes(stored.speed) ? stored.speed : 1;
+
+function setSpeed(value) {
+  if (!SPEEDS.includes(value)) return;
+  speed = value;
+  persist();
+}
 
 // What the emulation loop reads sixty times a second, rebuilt whenever a
 // binding changes rather than searched on every event.
@@ -64,7 +75,7 @@ function rebuildLookups() {
 }
 
 function persist() {
-  settings.write({ bindings, dsLayout });
+  settings.write({ bindings, dsLayout, speed });
 }
 
 rebuildLookups();
@@ -129,9 +140,23 @@ function renderBindings() {
   );
 }
 
+// Pads raise no events, so a capture polls for the first button that goes
+// down. Its own timer, not the emulation loop's: the settings screen is
+// usually open with nothing running, and even during a paused game that
+// loop is stopped.
+let capturePoll = null;
+
 function beginCapture(name, kind) {
   capturing = { name, kind };
+  clearInterval(capturePoll);
+  if (kind === 'pad') capturePoll = setInterval(pollCapture, 50);
   renderBindings();
+}
+
+function endCapture() {
+  capturing = null;
+  clearInterval(capturePoll);
+  capturePoll = null;
 }
 
 function assign(name, kind, value) {
@@ -143,7 +168,7 @@ function assign(name, kind, value) {
   }
   bindings[name] = { ...bindings[name], [kind]: value };
 
-  capturing = null;
+  endCapture();
   rebuildLookups();
   persist();
   renderBindings();
@@ -159,7 +184,7 @@ window.addEventListener(
     event.preventDefault();
     event.stopPropagation();
     if (event.key === 'Escape') {
-      capturing = null;
+      endCapture();
       renderBindings();
       return;
     }
@@ -168,8 +193,6 @@ window.addEventListener(
   true,
 );
 
-// Pads have no events, so a capture in progress polls for the first button
-// that goes down.
 function pollCapture() {
   if (!capturing || capturing.kind !== 'pad') return;
   const pad = navigator.getGamepads().find((candidate) => candidate && candidate.connected);
@@ -186,7 +209,7 @@ document.getElementById('settings-open').addEventListener('click', () => {
 
 document.getElementById('reset-bindings').addEventListener('click', () => {
   bindings = { ...DEFAULT_BINDINGS };
-  capturing = null;
+  endCapture();
   rebuildLookups();
   persist();
   renderBindings();

@@ -132,6 +132,7 @@ contextBridge.exposeInMainWorld('hub', {
   totp: (challenge) => ipcRenderer.invoke('hub:totp', challenge),
   logout: () => ipcRenderer.invoke('hub:logout'),
   saves: () => ipcRenderer.invoke('hub:saves'),
+  gameKey: (romPath) => ipcRenderer.invoke('hub:game-key', romPath),
   uploadSave: (params) => ipcRenderer.invoke('hub:save-upload', params),
   downloadSave: (params) => ipcRenderer.invoke('hub:save-download', params),
 });
@@ -161,6 +162,15 @@ contextBridge.exposeInMainWorld('emu', {
     if (!core.saveState || !statePath) return false;
     fs.writeFileSync(statePath, Buffer.from(core.saveState()));
     return true;
+  },
+  // What the pause menu shows about the saved state: whether this core can
+  // take one at all, whether there is one on disk, and how old it is.
+  stateInfo: () => {
+    const supported = Boolean(core && core.saveState);
+    if (!supported || !statePath || !fs.existsSync(statePath)) {
+      return { supported, savedAt: null };
+    }
+    return { supported, savedAt: fs.statSync(statePath).mtime.toISOString() };
   },
   loadState: () => {
     if (!core.loadState || !statePath || !fs.existsSync(statePath)) return false;

@@ -10,8 +10,10 @@ function show(name) {
   for (const panel of document.querySelectorAll('.panel')) panel.hidden = panel.id !== name;
 }
 
+// Back goes wherever the user came from: the pause menu when a game is
+// waiting behind these panels, the main menu otherwise.
 for (const back of document.querySelectorAll('.back')) {
-  back.addEventListener('click', () => show('picker'));
+  back.addEventListener('click', () => show(loadedRom() ? 'pause' : 'picker'));
 }
 
 // ---- Update banner ----------------------------------------------------
@@ -168,11 +170,26 @@ async function loadCloudSaves() {
     accountStatus.textContent = error.message;
     return;
   }
+
+  // With a game open, only its own saves are worth showing -- the rest
+  // belong to cartridges that aren't loaded and couldn't be restored
+  // anyway. The key is the ROM's CRC32, computed in the main process.
+  const rom = loadedRom();
+  let onlyThisGame = false;
+  if (rom) {
+    const key = await hub.gameKey(rom);
+    const mine = saves.filter((save) => save.gameKey === key);
+    onlyThisGame = true;
+    saves = mine;
+  }
+
   if (!saves.length) {
-    accountStatus.textContent = 'No tienes guardados en la nube todavía.';
+    accountStatus.textContent = onlyThisGame
+      ? 'Este juego no tiene guardados en la nube todavía.'
+      : 'No tienes guardados en la nube todavía.';
     return;
   }
-  accountStatus.textContent = '';
+  accountStatus.textContent = onlyThisGame ? 'Guardados de este juego.' : '';
   cloudSaves.replaceChildren(...saves.map(saveRow));
 }
 
@@ -194,7 +211,11 @@ function saveRow(save) {
     download.disabled = true;
     try {
       await hub.downloadSave({ id: save.id, savePath: rom.replace(/\.[^.]+$/, '.sav') });
-      accountStatus.textContent = 'Guardado traído. Vuelve a abrir el juego para cargarlo.';
+      // The core read its save RAM when the cartridge was parsed, so the
+      // new file only takes effect on a reload -- which is something this
+      // app can just do rather than ask the user for.
+      playRom(rom);
+      return;
     } catch (error) {
       accountStatus.textContent = error.message;
     }

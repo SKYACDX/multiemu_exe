@@ -32,6 +32,13 @@
   }
 
   .panel {
+    /* Above the canvas, which is absolutely positioned: the pause menu is
+       shown over a game that is still on screen, just not running. */
+    position: relative;
+    z-index: 1;
+    background: #101010ee;
+    padding: 16px;
+    border-radius: 10px;
     width: min(640px, 92vw);
     max-height: 92vh;
     display: flex;
@@ -159,6 +166,40 @@
   </div>
   <p id="browser-status" class="muted"></p>
   <ul id="results"></ul>
+</div>
+
+<div id="pause" class="panel" hidden>
+  <h1>Pausa</h1>
+
+  <div class="row">
+    <button id="resume" class="primary">Reanudar</button>
+    <button id="quit">Salir al menú</button>
+  </div>
+
+  <div class="row">
+    <label for="speed" style="flex: 1">Velocidad</label>
+    <select id="speed">
+      <option value="0.5">0,5x — lento</option>
+      <option value="1">1x — normal</option>
+      <option value="2">2x</option>
+      <option value="4">4x</option>
+    </select>
+  </div>
+  <p id="fps" class="muted"></p>
+  <p id="speed-note" class="muted">Fuera de 1x el sonido se silencia: acelerarlo sin remuestrear sonaría entrecortado.</p>
+
+  <h1 style="font-size: 16px">Estado guardado</h1>
+  <p id="state-info" class="muted"></p>
+  <div class="row">
+    <button id="save-state">Guardar estado (F5)</button>
+    <button id="load-state">Cargar estado (F8)</button>
+  </div>
+
+  <h1 style="font-size: 16px">Guardado de partida</h1>
+  <div class="row">
+    <button id="pause-cloud">Guardados en la nube</button>
+    <button id="pause-settings">Controles y pantallas</button>
+  </div>
 </div>
 
 <div id="settings" class="panel" hidden>
