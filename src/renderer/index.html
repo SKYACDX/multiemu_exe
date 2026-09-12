@@ -103,6 +103,19 @@
   #update pre { margin: 6px 0 0; white-space: pre-wrap; font: inherit; color: #b9c8da; max-height: 8em; overflow-y: auto; }
 
   #status { color: #e06c5a; min-height: 1em; margin: 0; }
+
+  /* Shown over the game, where the picker's own status line isn't. */
+  #toast {
+    position: fixed;
+    left: 50%;
+    bottom: 24px;
+    transform: translateX(-50%);
+    padding: 8px 16px;
+    background: #000000cc;
+    border: 1px solid #3d3d3d;
+    border-radius: 999px;
+    pointer-events: none;
+  }
 </style>
 
 <div id="picker" class="panel">
@@ -159,6 +172,7 @@
 </div>
 
 <canvas id="screen" hidden></canvas>
+<div id="toast" hidden></div>
 
 <script src="audio.js"></script>
 <script src="hub.js"></script>

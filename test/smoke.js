@@ -34,6 +34,19 @@ function assertAudioRate(core, label) {
   );
 }
 
+// Snapshot, run on, restore, and check the picture is the one from before.
+// A state that saves but doesn't restore looks fine until someone relies on
+// it, so the check is the round trip, not that the call returned bytes.
+function assertStateRoundTrip(core, label) {
+  const state = core.saveState();
+  assert.ok(state.length > 0, `${label}: empty savestate`);
+
+  const before = Buffer.from(core.frame());
+  for (let i = 0; i < 10; i++) core.runFrame();
+  assert.strictEqual(core.loadState(state), true, `${label}: loadState refused its own state`);
+  assert.ok(Buffer.from(core.frame()).equals(before), `${label}: frame differs after restoring`);
+}
+
 const gb = require('../build/Release/gb_addon.node');
 const gba = require('../build/Release/gba_addon.node');
 const ds = require('../build/Release/ds_addon.node');
@@ -114,6 +127,7 @@ assert.throws(() => new gba.Gba(new Uint8Array(1024)), /not a GBA ROM/);
 // and a mismatch here plays everything at the wrong speed rather than failing.
 assert.strictEqual(advance.audioSampleRate, 48000);
 assertAudioRate(advance, 'GBA');
+assertStateRoundTrip(advance, 'GBA');
 
 // --- DS ----------------------------------------------------------------
 //
@@ -147,5 +161,6 @@ for (let i = 3; i < dsFrame.length; i += 4) {
 
 assert.strictEqual(nintendoDs.audioSampleRate, 48000);
 assertAudioRate(nintendoDs, 'DS');
+assertStateRoundTrip(nintendoDs, 'DS');
 
 console.log('smoke: ok');

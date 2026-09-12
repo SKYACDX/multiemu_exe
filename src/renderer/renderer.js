@@ -51,7 +51,10 @@ function loop() {
   }
   if (due <= now) due = now; // too far behind to catch up; drop the debt
 
-  if (ran > 0) draw();
+  if (ran > 0) {
+    pollGamepad();
+    draw();
+  }
   setTimeout(loop, Math.max(0, due - performance.now()));
 }
 
@@ -75,6 +78,31 @@ const KEYS = {
   enter: 'start',
 };
 
+const toastElement = document.getElementById('toast');
+let toastTimer = null;
+
+function toast(text) {
+  toastElement.textContent = text;
+  toastElement.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    toastElement.hidden = true;
+  }, 2000);
+}
+
+// Save state on F5, restore on F8 -- kept out of KEYS because they are the
+// emulator's own controls, not the console's.
+window.addEventListener('keydown', (event) => {
+  if (event.key !== 'F5' && event.key !== 'F8') return;
+  event.preventDefault();
+  const saving = event.key === 'F5';
+  if (!(saving ? emu.saveState() : emu.loadState())) {
+    toast(saving ? 'Este núcleo no guarda estados' : 'No hay ningún estado guardado');
+    return;
+  }
+  toast(saving ? 'Estado guardado' : 'Estado cargado');
+});
+
 for (const [type, pressed] of [['keydown', true], ['keyup', false]]) {
   window.addEventListener(type, (event) => {
     const button = KEYS[event.key.toLowerCase()];
@@ -83,6 +111,60 @@ for (const [type, pressed] of [['keydown', true], ['keyup', false]]) {
     audioResume();
     emu.setButton(button, pressed);
   });
+}
+
+// ---- Gamepad ----------------------------------------------------------
+//
+// Indices come from the Gamepad API's "standard" mapping, so any controller
+// the browser recognises as standard works without per-pad configuration.
+// Face buttons follow the physical Nintendo layout rather than the labels:
+// index 0 is the bottom button, which is where A sits on a DS or a GBA.
+const PAD_BUTTONS = {
+  0: 'a',
+  1: 'b',
+  2: 'y',
+  3: 'x',
+  4: 'l',
+  5: 'r',
+  8: 'select',
+  9: 'start',
+  12: 'up',
+  13: 'down',
+  14: 'left',
+  15: 'right',
+};
+
+// Enough to ignore a resting stick that never quite reads zero.
+const STICK_DEADZONE = 0.5;
+
+// Only changes are sent, so a held button isn't re-sent sixty times a
+// second -- and so the keyboard and the pad don't fight over the same
+// button every frame.
+const padState = {};
+
+function pollGamepad() {
+  const pad = navigator.getGamepads().find((candidate) => candidate && candidate.connected);
+  if (!pad) return;
+
+  const pressed = {};
+  for (const [index, name] of Object.entries(PAD_BUTTONS)) {
+    if (pad.buttons[index]?.pressed) pressed[name] = true;
+  }
+
+  // The left stick doubles as the d-pad; plenty of pads report one and not
+  // the other.
+  const [x = 0, y = 0] = pad.axes;
+  if (x < -STICK_DEADZONE) pressed.left = true;
+  if (x > STICK_DEADZONE) pressed.right = true;
+  if (y < -STICK_DEADZONE) pressed.up = true;
+  if (y > STICK_DEADZONE) pressed.down = true;
+
+  for (const name of new Set([...Object.keys(PAD_BUTTONS).map((i) => PAD_BUTTONS[i]), 'left', 'right', 'up', 'down'])) {
+    const down = Boolean(pressed[name]);
+    if (padState[name] === down) continue;
+    padState[name] = down;
+    emu.setButton(name, down);
+  }
 }
 
 // ---- Touch screen (DS only) ----

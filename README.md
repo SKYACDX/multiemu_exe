@@ -23,14 +23,19 @@ npm run vendor:melonds # clona melonDS y le aplica los parches
 npm run build:mgba     # una vez cada uno; tardan unos minutos
 npm run build:melonds
 npm start              # compila los addons y abre la app
-npm test               # smoke test de los dos puentes nativos
+npm test               # smoke test de los tres puentes nativos
+npm run dist           # genera el instalador en dist/
 ```
 
 `electron . ruta\a\rom.gb` arranca directo en esa ROM.
 
 Controles: flechas, `X` = A, `Z` = B, `S` = X, `A` = Y, `Q` = L, `W` = R,
 `Shift` = Select, `Enter` = Start. En DS la pantalla táctil es la mitad
-inferior: se usa con el ratón.
+inferior: se usa con el ratón. También sirve cualquier mando que el
+navegador reconozca con el mapeo estándar, sin configurar nada.
+
+`F5` guarda el estado completo de la máquina y `F8` lo restaura, junto a la
+ROM en un `.state`. En Game Boy no hay: ese núcleo todavía no lo soporta.
 
 ## Estructura
 
@@ -131,3 +136,16 @@ Ninguno bloquea, pero conviene que la sesión web los sepa:
 - El `API_BASE` del cliente compartido omite el `www`, así que cada llamada
   se come un 308. Funciona (fetch sigue la redirección) pero se paga un
   viaje de más.
+
+### Empaquetado y firma
+
+`npm run dist` deja un instalador NSIS en `dist/` (~107MB). Los addons
+nativos van fuera del asar (`asarUnpack`), porque Electron no puede cargar
+un `.node` desde dentro, y `npmRebuild` está apagado: los compila cmake-js
+contra el ABI de Electron, no npm.
+
+**El `.exe` no va firmado.** Sin firma, SmartScreen avisa en cada descarga
+hasta que el binario acumula reputación. La opción barata y real es Azure
+Trusted Signing (~10 USD/mes); un certificado OV clásico cuesta varias
+veces eso y tampoco arranca con reputación. Es una decisión de dinero, no
+técnica, y conviene tomarla antes de publicar el primer release.

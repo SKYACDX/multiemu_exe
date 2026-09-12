@@ -1,0 +1,40 @@
+appId: online.emulatornds.multiemu
+productName: multiemu
+copyright: multiemu
+
+directories:
+  output: dist
+
+# Only what the app actually loads at runtime. The C++ sources, the vendored
+# emulator trees and the CMake build tree stay out -- third_party/melonds
+# alone is bigger than everything shipped here put together.
+files:
+  - src/**/*
+  - build/shared.js
+  - build/Release/*.node
+  - package.json
+
+# Electron cannot dlopen a .node from inside an asar, so the addons are left
+# unpacked beside it. Electron rewrites the require path for them
+# automatically, so nothing in the code has to know.
+asarUnpack:
+  - '**/*.node'
+
+# The addons are built by cmake-js against Electron's own ABI (see the build
+# script), not by npm, so there is nothing for electron-builder to rebuild --
+# and letting it try would fail on a project with no node-gyp bindings.
+npmRebuild: false
+
+win:
+  target: nsis
+  # Deliberately unsigned for now. An unsigned .exe trips SmartScreen on
+  # every download until it builds reputation; signing it properly means
+  # paying for a certificate. See the README.
+  signAndEditExecutable: true
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  # So double-clicking a ROM opens it -- src/main.js already reads a path
+  # off the command line.
+  perMachine: false

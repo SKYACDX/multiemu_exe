@@ -36,6 +36,10 @@ let buttons = null;
 let savePath = null;
 let lastSaved = null;
 
+// Whole-machine snapshot, next to the ROM like the .sav. Null for a core
+// that can't take one -- core/gb has no savestate support.
+let statePath = null;
+
 // ponytail: polls the save RAM every 5s instead of tracking dirty writes.
 // It's at most 32KB. Hook the MBC's writeRam if that ever stops being true.
 const SAVE_INTERVAL_MS = 5000;
@@ -51,6 +55,7 @@ function persistSave() {
 function open(romPath) {
   const sidecar = romPath.replace(/\.[^.]+$/, '.sav');
   savePath = null;
+  statePath = romPath.replace(/\.[^.]+$/, '.state');
 
   if (/\.nds$/i.test(romPath)) {
     // By path rather than by bytes: NDS images run to 512MB.
@@ -110,6 +115,17 @@ contextBridge.exposeInMainWorld('emu', {
     if (ordinal !== undefined) core.setButton(ordinal, pressed);
   },
   readAudio: (frames) => (core.readAudio ? core.readAudio(frames) : new Int16Array(0)),
+  // ponytail: one state per game, not numbered slots. The Android app has
+  // slots; add them here when someone actually wants a second one.
+  saveState: () => {
+    if (!core.saveState || !statePath) return false;
+    fs.writeFileSync(statePath, Buffer.from(core.saveState()));
+    return true;
+  },
+  loadState: () => {
+    if (!core.loadState || !statePath || !fs.existsSync(statePath)) return false;
+    return core.loadState(new Uint8Array(fs.readFileSync(statePath)));
+  },
   // No-ops on the cores with no touch screen.
   touch: (x, y) => core.touch && core.touch(x, y),
   releaseTouch: () => core.releaseTouch && core.releaseTouch(),

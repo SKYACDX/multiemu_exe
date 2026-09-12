@@ -11,6 +11,7 @@
 // reverting that swizzle first (see the README).
 #include <napi.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <memory>
 #include <optional>
@@ -21,6 +22,7 @@
 #include "NDS.h"
 #include "NDSCart.h"
 #include "SPI_Firmware.h"
+#include "Savestate.h"
 #include "ds_platform.h"
 
 using namespace melonDS;
@@ -83,6 +85,8 @@ class Ds : public Napi::ObjectWrap<Ds> {
                                InstanceMethod("touch", &Ds::touch),
                                InstanceMethod("releaseTouch", &Ds::releaseTouch),
                                InstanceMethod("readAudio", &Ds::readAudio),
+                               InstanceMethod("saveState", &Ds::saveState),
+                               InstanceMethod("loadState", &Ds::loadState),
                                InstanceAccessor("audioSampleRate", &Ds::audioSampleRate, nullptr),
                                InstanceAccessor("width", &Ds::width, nullptr),
                                InstanceAccessor("height", &Ds::height, nullptr),
@@ -244,6 +248,36 @@ class Ds : public Napi::ObjectWrap<Ds> {
 
     Napi::Value audioSampleRate(const Napi::CallbackInfo& info) {
         return Napi::Number::New(info.Env(), static_cast<int>(kAudioSampleRateHz));
+    }
+
+    // Unlike mGBA, whose state size is known up front, melonDS's Savestate
+    // owns and grows its own buffer -- so the length has to be read back
+    // off the object after DoSavestate has run.
+    Napi::Value saveState(const Napi::CallbackInfo& info) {
+        if (!ready(info.Env())) return info.Env().Undefined();
+
+        Savestate state;
+        if (state.Error || !nds_->DoSavestate(&state) || state.Error) {
+            Napi::Error::New(info.Env(), "no se pudo guardar el estado").ThrowAsJavaScriptException();
+            return info.Env().Undefined();
+        }
+
+        // Savestate::Buffer() hands back a void*, so it needs a type before
+        // it can be walked.
+        const auto* buffer = static_cast<const u8*>(state.Buffer());
+        auto out = Napi::Uint8Array::New(info.Env(), state.Length());
+        std::copy(buffer, buffer + state.Length(), out.Data());
+        return out;
+    }
+
+    Napi::Value loadState(const Napi::CallbackInfo& info) {
+        if (!ready(info.Env())) return info.Env().Undefined();
+
+        auto bytes = info[0].As<Napi::Uint8Array>();
+        // The `false` says this Savestate reads rather than writes.
+        Savestate state(bytes.Data(), static_cast<u32>(bytes.ByteLength()), false);
+        if (state.Error) return Napi::Boolean::New(info.Env(), false);
+        return Napi::Boolean::New(info.Env(), nds_->DoSavestate(&state) && !state.Error);
     }
 
     Napi::Value width(const Napi::CallbackInfo& info) {

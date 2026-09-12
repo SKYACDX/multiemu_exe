@@ -10,6 +10,7 @@
 
 #include <fcntl.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -39,6 +40,8 @@ class Gba : public Napi::ObjectWrap<Gba> {
                                InstanceMethod("frame", &Gba::frame),
                                InstanceMethod("setButton", &Gba::setButton),
                                InstanceMethod("readAudio", &Gba::readAudio),
+                               InstanceMethod("saveState", &Gba::saveState),
+                               InstanceMethod("loadState", &Gba::loadState),
                                InstanceAccessor("audioSampleRate", &Gba::audioSampleRate, nullptr),
                                InstanceAccessor("width", &Gba::width, nullptr),
                                InstanceAccessor("height", &Gba::height, nullptr),
@@ -192,6 +195,34 @@ class Gba : public Napi::ObjectWrap<Gba> {
 
     Napi::Value audioSampleRate(const Napi::CallbackInfo& info) {
         return Napi::Number::New(info.Env(), kAudioSampleRateHz);
+    }
+
+    // The whole machine (CPU, memory, PPU, APU), not just cartridge save
+    // RAM, so the user can rewind to anywhere rather than to wherever the
+    // game's own save system allows. mCore implements this fully, so both
+    // of these are passthroughs.
+    Napi::Value saveState(const Napi::CallbackInfo& info) {
+        if (!ready(info.Env())) return info.Env().Undefined();
+
+        const std::size_t size = core_->stateSize(core_);
+        auto out = Napi::Uint8Array::New(info.Env(), size);
+        if (!core_->saveState(core_, out.Data())) {
+            Napi::Error::New(info.Env(), "no se pudo guardar el estado").ThrowAsJavaScriptException();
+            return info.Env().Undefined();
+        }
+        return out;
+    }
+
+    Napi::Value loadState(const Napi::CallbackInfo& info) {
+        if (!ready(info.Env())) return info.Env().Undefined();
+
+        auto bytes = info[0].As<Napi::Uint8Array>();
+        if (bytes.ByteLength() != core_->stateSize(core_)) {
+            Napi::Error::New(info.Env(), "el estado no corresponde a este juego")
+                .ThrowAsJavaScriptException();
+            return info.Env().Undefined();
+        }
+        return Napi::Boolean::New(info.Env(), core_->loadState(core_, bytes.Data()));
     }
 
     Napi::Value width(const Napi::CallbackInfo& info) {
