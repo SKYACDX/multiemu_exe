@@ -12,7 +12,8 @@
     "vendor:melonds": "git clone --depth 1 --branch 1.1 https://github.com/melonDS-emu/melonDS.git third_party/melonds && git -C third_party/melonds am ../../vendor/multiemu/patches/melonds/*.patch ../../patches/melonds/*.patch",
     "build:melonds": "cmake -S third_party/melonds -B third_party/melonds/build-win -A x64 -DBUILD_QT_SDL=OFF -DENABLE_GDBSTUB=OFF -DENABLE_OGLRENDERER=OFF -DENABLE_JIT=OFF -DDIRENT_INCLUDE_DIRS=. -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded && cmake --build third_party/melonds/build-win --config Release --target core",
     "build:shared": "esbuild src/shared.ts --bundle --platform=node --target=node22 --format=cjs --outfile=build/shared.js",
-    "dist": "npm run build && electron-builder"
+    "dist": "npm run build && electron-builder",
+    "build:slirp": "cmake -S third_party/melonds/src/net/libslirp -B third_party/melonds/build-slirp -A x64 -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded && cmake --build third_party/melonds/build-slirp --config Release"
   },
   "devDependencies": {
     "cmake-js": "8.0.0",

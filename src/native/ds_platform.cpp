@@ -16,12 +16,16 @@
 #include "Platform.h"
 #include "SPI_Firmware.h"
 
+#include "Net.h"
+#include "Net_Slirp.h"
+
 #include <windows.h>
 
 #include <chrono>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <mutex>
 #include <semaphore>
 #include <string>
@@ -297,17 +301,48 @@ int MP_SendAck(u8* data, int len, u64 timestamp, void* userdata) { return 0; }
 int MP_RecvHostPacket(u8* data, u64* timestamp, void* userdata) { return 0; }
 u16 MP_RecvReplies(u8* data, u64 timestamp, u16 aidmask, void* userdata) { return 0; }
 
-// ---- Internet play -- not wired up yet. ----
+// ---- Internet play ----
 //
-// The Android port runs this over libslirp, but melonDS's `core` target
-// does not build src/net at all, so turning it on here means adding those
-// sources plus vendored libslirp. Desktop has it easier than Android did:
-// melonDS's own Qt frontend already implements both this and Net_PCap
-// (direct mode, which was never viable on Android), so it can be copied
-// rather than rebuilt. See docs/desktop-port-handoff.md section 3.
+// Slirp ("indirect" mode): melonDS acts as a virtual router doing NAT over
+// ordinary host sockets. Net_PCap would also work on a desktop (unlike on
+// Android, where raw adapter access made it a non-starter), but it needs
+// libpcap installed and an adapter picked by hand, so slirp is the one that
+// works with no setup.
+//
+// The DS does not need a real access point either: melonDS emulates one
+// (WifiAP.cpp, "melonAP"), and it is that AP which calls these two to push
+// packets out and pull them back in. So a game's Nintendo WFC connection
+// setup is talking to an access point that only exists inside the emulator.
+//
+// Built lazily, on the first packet a game actually sends: most sessions
+// never touch wifi and there is no reason to stand up a network stack for
+// them. Only ever called from the emulation thread.
+static Net g_net;
+static bool g_netStarted = false;
 
-int Net_SendPacket(u8* data, int len, void* userdata) { return 0; }
-int Net_RecvPacket(u8* data, void* userdata) { return 0; }
+static Net& EnsureNet() {
+    if (!g_netStarted) {
+        g_netStarted = true;
+        g_net.SetDriver(std::make_unique<Net_Slirp>(
+            [](const u8* data, int len) { g_net.RXEnqueue(data, len); }));
+        // One emulated console, so one instance, id 0 -- melonDS's Net
+        // supports several for its multi-window builds.
+        g_net.RegisterInstance(0);
+        Log(LogLevel::Info, "Net: slirp driver up\n");
+    }
+    return g_net;
+}
+
+int Net_SendPacket(u8* data, int len, void* userdata) {
+    EnsureNet().SendPacket(data, len, 0);
+    return 0;
+}
+
+int Net_RecvPacket(u8* data, void* userdata) {
+    // Net::RecvPacket pumps the driver itself (Driver->RecvCheck), so there
+    // is nothing else to tick on a timer.
+    return EnsureNet().RecvPacket(data, 0);
+}
 
 // ---- DSi-only peripherals -- not implemented yet. ----
 

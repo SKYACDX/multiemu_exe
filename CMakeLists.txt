@@ -66,15 +66,44 @@ add_library(melonds_teakra STATIC IMPORTED)
 set_target_properties(melonds_teakra PROPERTIES
     IMPORTED_LOCATION ${MELONDS_BUILD}/src/teakra/src/Release/teakra.lib)
 
-add_library(ds_addon SHARED src/native/ds_addon.cpp src/native/ds_platform.cpp ${CMAKE_JS_SRC})
+# melonDS's src/net, but only the three files internet play actually needs.
+# Its own `net-utils` target is not used on purpose: that one also drags in
+# Net_PCap (libpcap) and LAN/Netplay/LocalMP (ENet), none of which this app
+# has any use for, and both of which are extra dependencies to satisfy.
+set(MELONDS_NET ${CMAKE_CURRENT_SOURCE_DIR}/third_party/melonds/src/net)
+
+add_library(ds_addon SHARED
+    src/native/ds_addon.cpp
+    src/native/ds_platform.cpp
+    ${MELONDS_NET}/Net.cpp
+    ${MELONDS_NET}/Net_Slirp.cpp
+    ${MELONDS_NET}/PacketDispatcher.cpp
+    ${CMAKE_JS_SRC})
 set_target_properties(ds_addon PROPERTIES PREFIX "" SUFFIX ".node" CXX_STANDARD 20)
 target_include_directories(ds_addon PRIVATE
     ${CMAKE_JS_INC} ${NODE_ADDON_API_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/melonds/src)
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/melonds/src
+    ${MELONDS_NET}
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/melonds/src/net/libslirp/src
+    # libslirp-version.h is generated at configure time into libslirp's own
+    # build directory, not shipped in its source tree.
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/melonds/build-slirp)
 # ole32/comctl32/wsock32/ws2_32 are what melonDS's own CMake links on
 # Windows; core.lib is imported as a prebuilt, so none of that propagates.
+set(SLIRP_LIB ${CMAKE_CURRENT_SOURCE_DIR}/third_party/melonds/build-slirp/Release/slirp.lib)
+if(NOT EXISTS ${SLIRP_LIB})
+    message(FATAL_ERROR "libslirp not built: run `npm run build:slirp` first")
+endif()
+
+add_library(slirp STATIC IMPORTED)
+set_target_properties(slirp PROPERTIES IMPORTED_LOCATION ${SLIRP_LIB})
+
+# iphlpapi: libslirp reads the host's DNS configuration through it on
+# Windows. The rest is what melonDS's own CMake links; core.lib is imported
+# as a prebuilt, so none of that propagates.
 target_link_libraries(ds_addon PRIVATE
-    melonds_core melonds_teakra ole32 comctl32 wsock32 ws2_32 ${CMAKE_JS_LIB})
+    melonds_core melonds_teakra slirp
+    ole32 comctl32 wsock32 ws2_32 iphlpapi ${CMAKE_JS_LIB})
 # No JIT_ENABLED here, and that is deliberate rather than an omission.
 # melonDS decides whether it can build its JIT by probing for __x86_64__,
 # which MSVC does not define, so its cmake_dependent_option quietly forces
@@ -90,4 +119,10 @@ target_link_libraries(ds_addon PRIVATE
 # TinyVector.h, while staying ABI-compatible with the MSVC-built addons.
 # NOMINMAX: napi.h pulls in windows.h, whose max/min macros break the
 # std::max calls in melonDS's ARM.h.
-target_compile_definitions(ds_addon PRIVATE NAPI_DISABLE_CPP_EXCEPTIONS NAPI_VERSION=8 NOMINMAX)
+#
+# LIBSLIRP_STATIC_BUILD is the same story in miniature: libslirp declares it
+# PUBLIC on its own target, but this build imports the prebuilt .lib, so
+# nothing propagates. Without it libslirp.h marks every function
+# __declspec(dllimport) and the link fails on __imp_slirp_*.
+target_compile_definitions(ds_addon PRIVATE
+    NAPI_DISABLE_CPP_EXCEPTIONS NAPI_VERSION=8 NOMINMAX LIBSLIRP_STATIC_BUILD)

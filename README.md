@@ -22,6 +22,7 @@ npm run vendor:mgba    # clona mGBA en el tag fijado (third_party/ no se version
 npm run vendor:melonds # clona melonDS y le aplica los parches
 npm run build:mgba     # una vez cada uno; tardan unos minutos
 npm run build:melonds
+npm run build:slirp    # la pila de red para el internet del DS
 npm start              # compila los addons y abre la app
 npm test               # smoke test de los tres puentes nativos
 npm run dist           # genera el instalador en dist/
@@ -84,6 +85,37 @@ revertir ese swizzle antes.**
 El parche propio (`0003`) quita un `#include <dirent.h>` de
 `FATStorage.cpp` que no se usa: todo el trabajo de directorios del fichero
 va por FatFs (`f_opendir`), y MSVC no tiene `dirent.h`.
+
+### Internet del DS
+
+Va por libslirp en modo indirecto: melonDS hace de router virtual con NAT
+sobre sockets normales del sistema. `Net_PCap` (modo directo) también
+funcionaría en escritorio, al contrario que en Android, pero exige libpcap
+instalado y elegir un adaptador a mano, así que slirp es el que funciona
+sin preparar nada.
+
+No se usa el objetivo `net-utils` de melonDS: ese arrastra `Net_PCap`
+(libpcap) y `LAN`/`Netplay`/`LocalMP` (ENet), que aquí no hacen falta. Solo
+se compilan `Net.cpp`, `Net_Slirp.cpp` y `PacketDispatcher.cpp` dentro del
+addon, más `slirp.lib`.
+
+El parche `0004` es lo que hace falta para MSVC: las ramas de Windows de
+`Net_Slirp` están detrás de `__WIN32__`, que solo define MinGW — todo lo
+que necesitan (WSAPoll, el apaño de `clock_gettime`) ya estaba escrito, MSVC
+simplemente no lo veía. Y el shim de glib que trae libslirp usa
+`__builtin_expect` y `__builtin_unreachable`, que MSVC no tiene.
+
+`LIBSLIRP_STATIC_BUILD` hay que repetirlo a mano en el addon por la misma
+razón que `JIT_ENABLED`: libslirp lo declara `PUBLIC` en su objetivo, pero
+aquí se importa el `.lib` ya compilado y una librería importada no propaga
+nada. Sin él, `libslirp.h` marca todo como `__declspec(dllimport)` y el
+enlace falla con `__imp_slirp_*`.
+
+**Compila, enlaza y no rompe nada, pero la conexión real no está
+verificada en escritorio.** Para comprobarla hace falta entrar a los
+ajustes de la CWF de Nintendo desde dentro de un juego compatible y poner
+un DNS comunitario a mano — los pasos exactos están en el changelog de la
+v1.8 de Android.
 
 ### Sin JIT, y por qué
 
