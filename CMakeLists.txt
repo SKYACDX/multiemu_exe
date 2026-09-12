@@ -49,3 +49,45 @@ target_include_directories(gba_addon PRIVATE ${CMAKE_JS_INC} ${NODE_ADDON_API_DI
 # shlwapi: mGBA's mCoreConfigPortablePath calls PathRemoveFileSpecW.
 target_link_libraries(gba_addon PRIVATE mgba shlwapi ${CMAKE_JS_LIB})
 target_compile_definitions(gba_addon PRIVATE NAPI_DISABLE_CPP_EXCEPTIONS NAPI_VERSION=8)
+
+# melonDS, same deal as mGBA: vendored under third_party/ and prebuilt out
+# of band. See the `build:melonds` script.
+set(MELONDS_BUILD ${CMAKE_CURRENT_SOURCE_DIR}/third_party/melonds/build-win)
+if(NOT EXISTS ${MELONDS_BUILD}/src/Release/core.lib)
+    message(FATAL_ERROR "melonDS not built: run `npm run build:melonds` first")
+endif()
+
+add_library(melonds_core STATIC IMPORTED)
+set_target_properties(melonds_core PROPERTIES IMPORTED_LOCATION ${MELONDS_BUILD}/src/Release/core.lib)
+
+# teakra (the DSi's DSP) is vendored inside melonDS's own tree and builds as
+# a separate lib that core links against; core.lib alone is not enough.
+add_library(melonds_teakra STATIC IMPORTED)
+set_target_properties(melonds_teakra PROPERTIES
+    IMPORTED_LOCATION ${MELONDS_BUILD}/src/teakra/src/Release/teakra.lib)
+
+add_library(ds_addon SHARED src/native/ds_addon.cpp src/native/ds_platform.cpp ${CMAKE_JS_SRC})
+set_target_properties(ds_addon PROPERTIES PREFIX "" SUFFIX ".node" CXX_STANDARD 20)
+target_include_directories(ds_addon PRIVATE
+    ${CMAKE_JS_INC} ${NODE_ADDON_API_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/melonds/src)
+# ole32/comctl32/wsock32/ws2_32 are what melonDS's own CMake links on
+# Windows; core.lib is imported as a prebuilt, so none of that propagates.
+target_link_libraries(ds_addon PRIVATE
+    melonds_core melonds_teakra ole32 comctl32 wsock32 ws2_32 ${CMAKE_JS_LIB})
+# No JIT_ENABLED here, and that is deliberate rather than an omission.
+# melonDS decides whether it can build its JIT by probing for __x86_64__,
+# which MSVC does not define, so its cmake_dependent_option quietly forces
+# ENABLE_JIT off no matter what is passed on the command line -- core.lib
+# genuinely has no JIT in it. Defining JIT_ENABLED on this side anyway
+# would be the sizeof(NDS) mismatch from
+# docs/desktop-port-handoff.md section 2, just in the opposite direction:
+# NDS.h keeps a data member behind that #ifdef, so this translation unit
+# would allocate a larger NDS than the core was compiled against.
+#
+# Getting the JIT back means building melonDS with clang-cl, which defines
+# the GCC-style arch macros and accepts the __attribute__((packed)) in
+# TinyVector.h, while staying ABI-compatible with the MSVC-built addons.
+# NOMINMAX: napi.h pulls in windows.h, whose max/min macros break the
+# std::max calls in melonDS's ARM.h.
+target_compile_definitions(ds_addon PRIVATE NAPI_DISABLE_CPP_EXCEPTIONS NAPI_VERSION=8 NOMINMAX)

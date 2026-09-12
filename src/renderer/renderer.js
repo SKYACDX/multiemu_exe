@@ -44,7 +44,8 @@ function loop() {
 }
 
 // Key -> button name. The preload maps names to each core's own ordinals,
-// which are not the same between GB and GBA. L/R have no effect on GB.
+// which differ per console. A button the loaded core doesn't have (L/R on
+// Game Boy, X/Y on anything but the DS) is simply ignored there.
 // Keys are lowercased before lookup so holding Shift (Select) doesn't turn
 // 'x' into 'X' and drop the A button.
 const KEYS = {
@@ -54,10 +55,12 @@ const KEYS = {
   arrowdown: 'down',
   x: 'a',
   z: 'b',
+  s: 'x',
+  a: 'y',
+  q: 'l',
+  w: 'r',
   shift: 'select',
   enter: 'start',
-  a: 'l',
-  s: 'r',
 };
 
 for (const [type, pressed] of [['keydown', true], ['keyup', false]]) {
@@ -68,6 +71,38 @@ for (const [type, pressed] of [['keydown', true], ['keyup', false]]) {
     emu.setButton(button, pressed);
   });
 }
+
+// ---- Touch screen (DS only) ----
+//
+// The canvas is letterboxed by object-fit: contain, so a click has to be
+// mapped back through that fit before it means anything in console pixels.
+function canvasPixel(event) {
+  const rect = canvas.getBoundingClientRect();
+  const scale = Math.min(rect.width / canvas.width, rect.height / canvas.height);
+  const drawnWidth = canvas.width * scale;
+  const drawnHeight = canvas.height * scale;
+  return {
+    x: Math.floor((event.clientX - (rect.left + (rect.width - drawnWidth) / 2)) / scale),
+    y: Math.floor((event.clientY - (rect.top + (rect.height - drawnHeight) / 2)) / scale),
+  };
+}
+
+// The DS is the only core with a touch screen, and its frame is both
+// screens stacked, so the touchable half is always the bottom one.
+function sendTouch(event) {
+  const { x, y } = canvasPixel(event);
+  const topScreenHeight = canvas.height / 2;
+  if (x < 0 || x >= canvas.width || y < topScreenHeight || y >= canvas.height) return;
+  emu.touch(x, y - topScreenHeight);
+}
+
+canvas.addEventListener('mousedown', sendTouch);
+canvas.addEventListener('mousemove', (event) => {
+  if (event.buttons & 1) sendTouch(event);
+});
+// On window too, not just the canvas: releasing outside it still has to lift
+// the stylus, or the game sees a permanently held touch.
+window.addEventListener('mouseup', () => emu.releaseTouch());
 
 function start(romPath) {
   let size;
@@ -82,6 +117,7 @@ function start(romPath) {
   canvas.height = size.height;
   image = ctx.createImageData(size.width, size.height);
 
+  emu.fitWindow(size);
   picker.hidden = true;
   canvas.hidden = false;
   loop();

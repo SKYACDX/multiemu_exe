@@ -19,15 +19,18 @@ Estado: **Game Boy funcionando** (vÃ­deo + teclado). GBA y NDS pendientes.
 git clone --recurse-submodules https://github.com/SKYACDX/multiemu_exe.git
 npm install
 npm run vendor:mgba    # clona mGBA en el tag fijado (third_party/ no se versiona)
-npm run build:mgba     # una vez; tarda unos minutos
+npm run vendor:melonds # clona melonDS y le aplica los parches
+npm run build:mgba     # una vez cada uno; tardan unos minutos
+npm run build:melonds
 npm start              # compila los addons y abre la app
 npm test               # smoke test de los dos puentes nativos
 ```
 
 `electron . ruta\a\rom.gb` arranca directo en esa ROM.
 
-Controles: flechas, `X` = A, `Z` = B, `Shift` = Select, `Enter` = Start,
-`A` = L, `S` = R.
+Controles: flechas, `X` = A, `Z` = B, `S` = X, `A` = Y, `Q` = L, `W` = R,
+`Shift` = Select, `Enter` = Start. En DS la pantalla táctil es la mitad
+inferior: se usa con el ratón.
 
 ## Estructura
 
@@ -61,3 +64,32 @@ escritorio y aÃºn no aplican porque falta el NDS:
   en OLD, `CMAKE_MSVC_RUNTIME_LIBRARY` se ignora allí y hay que poner
   `/MT` a mano en `CMAKE_C_FLAGS_RELEASE` — si no, el enlace falla con
   dos docenas de `__imp_*` sin resolver.
+
+### Los parches de melonDS
+
+`vendor:melonds` aplica los dos parches de Android **enteros** más uno
+nuestro. Aplicarlos enteros es correcto aquí solo por una razón: este build
+usa `ENABLE_OGLRENDERER=OFF`, así que ninguno de los ficheros de OpenGL
+llega a compilar. Eso vuelve inofensivo el cambio del swizzle del
+compositor de `.bgr` a `.rgb`, que en escritorio pintaría los azules en
+naranja, y a cambio salen gratis los arreglos de portabilidad a MSVC del
+mismo commit. **Si algún día se enciende el renderer de OpenGL, hay que
+revertir ese swizzle antes.**
+
+El parche propio (`0003`) quita un `#include <dirent.h>` de
+`FATStorage.cpp` que no se usa: todo el trabajo de directorios del fichero
+va por FatFs (`f_opendir`), y MSVC no tiene `dirent.h`.
+
+### Sin JIT, y por qué
+
+melonDS decide si puede construir su JIT probando `__x86_64__`, que MSVC no
+define, así que su `cmake_dependent_option` lo apaga solo por mucho que se
+pase `-DENABLE_JIT=ON` — la caché guarda el valor pedido, no el usado. Por
+eso `ds_addon` **no** define `JIT_ENABLED`: hacerlo sería el desajuste de
+`sizeof(NDS)` del handoff, en sentido contrario.
+
+No hace falta de momento. El intérprete mueve SoulSilver a ~108fps en este
+equipo, casi el doble de tiempo real. Si alguna vez hiciera falta, el
+camino es compilar melonDS con clang-cl, que sí define las macros de
+arquitectura al estilo GCC y acepta el `__attribute__((packed))` de
+`TinyVector.h`, manteniendo compatibilidad de ABI con los addons de MSVC.

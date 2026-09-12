@@ -3,21 +3,36 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 const gb = require('../build/Release/gb_addon.node');
 const gba = require('../build/Release/gba_addon.node');
+const ds = require('../build/Release/ds_addon.node');
 
-// gb::Button (joypad.h) and mGBA's enum GBAKey (mgba/internal/gba/input.h)
-// number their buttons differently, so the renderer is given names and this
-// file owns the translation. A core without an L/R button simply has no
-// entry for it.
+// Every core numbers its buttons differently -- gb::Button (joypad.h),
+// mGBA's enum GBAKey, and the DS's own KeyInput order -- so the renderer is
+// given names and this file owns the translation. A core without a given
+// button simply has no entry for it, and pressing it does nothing.
 const GB_BUTTONS = { right: 0, left: 1, up: 2, down: 3, a: 4, b: 5, select: 6, start: 7 };
 const GBA_BUTTONS = { a: 0, b: 1, select: 2, start: 3, right: 4, left: 5, up: 6, down: 7, r: 8, l: 9 };
+const DS_BUTTONS = { ...GBA_BUTTONS, x: 10, y: 11 };
+
+function argument(name) {
+  const prefix = `--${name}=`;
+  return (process.argv.find((value) => value.startsWith(prefix)) || '').slice(prefix.length) || null;
+}
+
+// Where melonDS keeps its firmware image, which is what makes the DS's own
+// settings outlive a session. Has to be set before any DS instance exists.
+const userDataDir = argument('userdata');
+if (userDataDir) {
+  fs.mkdirSync(userDataDir, { recursive: true });
+  ds.setLocalDir(userDataDir);
+}
 
 // One emulator per window. The native object itself can't cross
 // contextBridge -- only plain data can -- so it stays here.
 let core = null;
 let buttons = null;
 
-// Only set for Game Boy. mGBA writes cartridge RAM straight through to the
-// save file as the game saves, so there's nothing to do on that side.
+// Only set for Game Boy. mGBA and melonDS both write cartridge RAM straight
+// through to the save file as the game saves, so those two need nothing.
 let savePath = null;
 let lastSaved = null;
 
@@ -34,21 +49,25 @@ function persistSave() {
 }
 
 function open(romPath) {
-  const rom = fs.readFileSync(romPath);
   const sidecar = romPath.replace(/\.[^.]+$/, '.sav');
+  savePath = null;
 
-  if (/\.gba$/i.test(romPath)) {
-    // mGBA keeps this file open and writable for the core's lifetime.
-    core = new gba.Gba(rom, sidecar);
+  if (/\.nds$/i.test(romPath)) {
+    // By path rather than by bytes: NDS images run to 512MB.
+    core = new ds.Ds(romPath, sidecar);
+    buttons = DS_BUTTONS;
+  } else if (/\.gba$/i.test(romPath)) {
+    core = new gba.Gba(fs.readFileSync(romPath), sidecar);
     buttons = GBA_BUTTONS;
-    savePath = null;
   } else {
-    core = new gb.GameBoy(rom);
+    core = new gb.GameBoy(fs.readFileSync(romPath));
     buttons = GB_BUTTONS;
-    savePath = core.hasBattery() ? sidecar : null;
-    if (savePath && fs.existsSync(sidecar)) {
-      lastSaved = fs.readFileSync(sidecar);
-      core.loadSave(lastSaved);
+    if (core.hasBattery()) {
+      savePath = sidecar;
+      if (fs.existsSync(sidecar)) {
+        lastSaved = fs.readFileSync(sidecar);
+        core.loadSave(lastSaved);
+      }
     }
   }
 
@@ -61,15 +80,17 @@ window.addEventListener('beforeunload', () => core && persistSave());
 contextBridge.exposeInMainWorld('emu', {
   // Passed through from the main process's command line (see main.js), so
   // double-clicking a ROM boots straight into it.
-  initialRom:
-    (process.argv.find((argument) => argument.startsWith('--rom=')) || '').slice('--rom='.length) ||
-    null,
+  initialRom: argument('rom'),
   open,
   pickRom: () => ipcRenderer.invoke('pick-rom'),
+  fitWindow: (size) => ipcRenderer.invoke('fit-window', size),
   runFrame: () => core.runFrame(),
   frame: () => core.frame(),
   setButton: (name, pressed) => {
     const ordinal = buttons[name];
     if (ordinal !== undefined) core.setButton(ordinal, pressed);
   },
+  // No-ops on the cores with no touch screen.
+  touch: (x, y) => core.touch && core.touch(x, y),
+  releaseTouch: () => core.releaseTouch && core.releaseTouch(),
 });

@@ -11,10 +11,19 @@
   }
   body { display: grid; place-items: center; }
   #screen {
+    cursor: crosshair; /* the bottom half is the DS touch screen */
+    /* Absolute, not a grid item: inside the grid the row stayed auto-sized,
+       so height:100% resolved to auto, the canvas scaled itself by width
+       alone, and object-fit had no spare box to letterbox into -- the DS's
+       bottom screen just got clipped off. Positioning against the viewport
+       gives both axes a definite size. */
+    position: absolute;
+    inset: 0;
     width: 100%;
     height: 100%;
     /* canvas is a replaced element, so object-fit letterboxes it at the
-       core's own aspect ratio -- 160x144 for GB, 240x160 for GBA. */
+       core's own aspect ratio: 160x144 for GB, 240x160 for GBA, and 256x384
+       for the DS's two stacked screens. */
     object-fit: contain;
     image-rendering: pixelated;
   }
@@ -25,7 +34,7 @@
 
 <div id="picker">
   <button id="open">Abrir ROM</button>
-  <p>Game Boy, Game Boy Color o Game Boy Advance</p>
+  <p>Game Boy, Game Boy Color, Game Boy Advance o Nintendo DS</p>
   <p id="status"></p>
 </div>
 <canvas id="screen" hidden></canvas>

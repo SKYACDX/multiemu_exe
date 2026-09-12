@@ -1,0 +1,31 @@
+From bbb682e47ff4faf61185f0475fad820a34403cc7 Mon Sep 17 00:00:00 2001
+From: WilbertACDX <115293547+WilbertACDX@users.noreply.github.com>
+Date: Sat, 12 Sep 2026 02:47:57 -0600
+Subject: [PATCH] MSVC: drop the unused <dirent.h> include
+
+FATStorage.cpp includes it but never calls anything from it -- every
+directory operation in the file goes through FatFs (f_opendir/f_readdir),
+not POSIX dirent. MSVC has no <dirent.h>, and melonDS's own CMake expects
+one to be findable on Windows when not building with MinGW, which is only
+true if you happen to have a shim installed.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ src/FATStorage.cpp | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/src/FATStorage.cpp b/src/FATStorage.cpp
+index c93e90b..decff34 100644
+--- a/src/FATStorage.cpp
++++ b/src/FATStorage.cpp
+@@ -17,7 +17,6 @@
+ */
+ 
+ #include <string.h>
+-#include <dirent.h>
+ #include <inttypes.h>
+ #include <vector>
+ 
+-- 
+2.44.0.windows.1
+
