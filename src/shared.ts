@@ -13,6 +13,7 @@ export * from '../vendor/multiemu/app/src/api/themes';
 export * from '../vendor/multiemu/app/src/patchers';
 export { extractFromZip } from '../vendor/multiemu/app/src/zip';
 export { crc32 } from '../vendor/multiemu/app/src/patchers/crc32';
+import { crc32 } from '../vendor/multiemu/app/src/patchers/crc32';
 
 import type { AppRelease } from '../vendor/multiemu/app/src/api/romHackHub';
 
@@ -66,4 +67,19 @@ export function isWindowsRelease(release: AppRelease): boolean {
   const filename = /filename%3D%22([^%]+)%22/i.exec(release.apkUrl || '')?.[1];
   if (filename) return filename.toLowerCase().endsWith('.exe');
   return release.minAndroidSdk === null || release.minAndroidSdk === undefined;
+}
+
+/**
+ * How a cartridge is identified in the cloud, and a compatibility contract
+ * with the Android app rather than a free choice: get it wrong and the two
+ * devices never see each other's saves.
+ *
+ * Android builds it as `${system}:${romId}` with
+ * `romId = crc32(bytes).toString(16)` (cloudGameKey in App.tsx, and
+ * LocalLinkScreen for the romId). The hex is deliberately NOT zero-padded,
+ * so a CRC whose top nibble is zero produces seven characters, and padding
+ * it to eight would silently stop matching.
+ */
+export function cloudGameKey(system: 'gb' | 'gba' | 'nds', rom: Uint8Array): string {
+  return `${system}:${(crc32(rom) >>> 0).toString(16)}`;
 }

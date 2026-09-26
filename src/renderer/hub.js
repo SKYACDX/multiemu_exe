@@ -228,11 +228,21 @@ async function loadCloudSaves() {
   cloudSaves.replaceChildren(...saves.map(saveRow));
 }
 
+// Slot -1 is the in-game battery save; 0-3 are whole-machine states, and
+// Android's 3 is its automatic one. Naming them matters now that both kinds
+// share one list: bringing a state down and writing it over the battery
+// save would corrupt the cartridge.
+function slotLabel(slot) {
+  if (slot === GAME_SAVE_SLOT) return 'Partida guardada';
+  if (slot === 3) return 'Estado automático';
+  return `Estado ${slot + 1}`;
+}
+
 function saveRow(save) {
   const row = document.createElement('li');
   const title = element('div', undefined, 'title');
   title.append(
-    element('strong', save.originalName),
+    element('strong', slotLabel(save.slot)),
     element('span', `${megabytes(save.fileSize)} · ${new Date(save.updatedAt).toLocaleString()}`),
   );
 
@@ -245,10 +255,13 @@ function saveRow(save) {
     }
     download.disabled = true;
     try {
-      await hub.downloadSave({ id: save.id, savePath: rom.replace(/\.[^.]+$/, '.sav') });
-      // The core read its save RAM when the cartridge was parsed, so the
-      // new file only takes effect on a reload -- which is something this
-      // app can just do rather than ask the user for.
+      // A battery save and a save state are different files locally, and
+      // putting one where the other belongs breaks the game.
+      const extension = save.slot === GAME_SAVE_SLOT ? '.sav' : '.state';
+      await hub.downloadSave({ id: save.id, savePath: rom.replace(/\.[^.]+$/, extension) });
+      // The core read its save RAM when the cartridge was parsed, so a new
+      // file only takes effect on a reload -- which this app can just do
+      // rather than ask the user for.
       playRom(rom);
       return;
     } catch (error) {
@@ -304,24 +317,61 @@ document.getElementById('logout').addEventListener('click', async () => {
   accountStatus.textContent = '';
 });
 
-document.getElementById('upload-save').addEventListener('click', async (event) => {
+// The slot the Android app reserves for the in-game battery save. Its save
+// states live in 0-3, so uploading a battery save to slot 0 would land on
+// top of one of those.
+//
+// 99 and not -1: it started as -1 and moved when the server turned out to
+// reject negative slots ("Fix cloud save slot validation" in the shared
+// repo). Reading the commit that introduced the constant rather than the
+// one that last changed it is how this got picked wrong the first time.
+const GAME_SAVE_SLOT = 99;
+
+// The desktop app keeps a single save state per game rather than numbered
+// slots, so it uploads as slot 0 and can bring any of them down.
+const DESKTOP_STATE_SLOT = 0;
+
+async function upload(button, { suffix, slot, filename, done }) {
   const rom = loadedRom();
   if (!rom) {
     accountStatus.textContent = 'Abre un juego primero.';
     return;
   }
-  event.target.disabled = true;
+  button.disabled = true;
   try {
-    // Keyed by the ROM's CRC32 rather than its filename, so the same
-    // cartridge matches across devices -- src/hub.js does the hashing.
-    await hub.uploadSave({ romPath: rom, savePath: rom.replace(/\.[^.]+$/, '.sav'), slot: 0 });
-    accountStatus.textContent = 'Guardado subido.';
+    // Keyed by "<system>:<crc32>", the same identity the Android app uses,
+    // so one cartridge matches across devices -- src/hub.js builds it.
+    await hub.uploadSave({
+      romPath: rom,
+      savePath: rom.replace(/\.[^.]+$/, suffix),
+      slot,
+      filename,
+    });
+    accountStatus.textContent = done;
     loadCloudSaves();
   } catch (error) {
     accountStatus.textContent = error.message;
   }
-  event.target.disabled = false;
-});
+  button.disabled = false;
+}
+
+document.getElementById('upload-save').addEventListener('click', (event) =>
+  upload(event.target, {
+    suffix: '.sav',
+    slot: GAME_SAVE_SLOT,
+    filename: 'game.sav',
+    done: 'Partida subida.',
+  }),
+);
+
+document.getElementById('upload-state').addEventListener('click', (event) =>
+  upload(event.target, {
+    suffix: '.state',
+    slot: DESKTOP_STATE_SLOT,
+    filename: `slot${DESKTOP_STATE_SLOT}.sav`,
+    done: 'Estado subido.',
+  }),
+);
 
 document.getElementById('account-open').addEventListener('click', async () => {
   show('account');

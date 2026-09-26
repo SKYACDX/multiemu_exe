@@ -67,13 +67,28 @@ function restoreToken() {
   }
 }
 
-// The cloud key is the ROM's CRC32, not its filename: that is how the
-// Android app names its own save files, so the same cartridge lines up
-// across devices no matter what the file was called when it was downloaded.
-// The local sidecar .sav keeps using the ROM's name, which is the
+// The cloud identity of a cartridge, and it has to match the Android app
+// exactly or the two devices never see each other's saves.
+//
+// Android builds it as `${system}:${romId}` where romId is
+// `crc32(bytes).toString(16)` -- see cloudGameKey and LocalLinkScreen in the
+// shared repo. Three details that all have to be right:
+//
+//   - the `<system>:` prefix exists so two consoles' save formats can never
+//     collide on one cartridge dump;
+//   - the hex is NOT zero-padded, so a CRC starting with a zero nibble
+//     would not match a padded one;
+//   - the CRC is of the raw ROM, which is why a zipped download and a
+//     loose file of the same dump agree.
+//
+// The local sidecar .sav keeps using the ROM's filename, which is the
 // predictable thing on a desktop.
+const SYSTEM_BY_EXTENSION = { nds: 'nds', gba: 'gba', gbc: 'gb', gb: 'gb' };
+
 function gameKey(romPath) {
-  return shared.crc32(new Uint8Array(fs.readFileSync(romPath))).toString(16).padStart(8, '0');
+  const extension = path.extname(romPath).slice(1).toLowerCase();
+  const system = SYSTEM_BY_EXTENSION[extension] || 'gb';
+  return shared.cloudGameKey(system, new Uint8Array(fs.readFileSync(romPath)));
 }
 
 function requireToken() {
@@ -189,13 +204,17 @@ function register() {
   // belonging to the game that is open.
   ipcMain.handle('hub:game-key', (event, romPath) => gameKey(romPath));
 
-  ipcMain.handle('hub:save-upload', async (event, { romPath, savePath, slot }) => {
+  // slot -1 is the in-game battery save; 0-3 are whole-machine states.
+  // Android reserves exactly this numbering (GAME_SAVE_CLOUD_SLOT = -1), and
+  // uploading a battery save to slot 0 -- which this used to do -- would
+  // land on top of a save state made on the phone.
+  ipcMain.handle('hub:save-upload', async (event, { romPath, savePath, slot, filename }) => {
     if (!fs.existsSync(savePath)) {
       throw new Error('Este juego todavía no ha guardado nada');
     }
     const key = gameKey(romPath);
     const bytes = new Uint8Array(fs.readFileSync(savePath));
-    await shared.uploadCloudSave(requireToken(), key, slot ?? 0, bytes, path.basename(savePath));
+    await shared.uploadCloudSave(requireToken(), key, slot, bytes, filename);
     return key;
   });
 

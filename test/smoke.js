@@ -231,6 +231,28 @@ assert.strictEqual(shared.isWindowsRelease(windowsRelease), true);
 assert.strictEqual(shared.isWindowsRelease({ apkUrl: null, minAndroidSdk: 24 }), false);
 assert.strictEqual(shared.isWindowsRelease({ apkUrl: null, minAndroidSdk: null }), true);
 
+// --- Cloud save identity -----------------------------------------------
+//
+// This one is a contract with the Android app, not a local choice: the two
+// only ever see each other's saves if the key matches exactly. It was wrong
+// in all three ways at once once already -- no system prefix, zero-padded
+// hex, and the battery save uploaded to a save-state slot.
+assert.strictEqual(
+  shared.cloudGameKey('gba', new Uint8Array(Buffer.from('multiemu'))),
+  'gba:1bf63dba',
+);
+assert.strictEqual(
+  shared.cloudGameKey('nds', new Uint8Array(Buffer.from('multiemu'))),
+  'nds:1bf63dba',
+);
+
+// A CRC32 whose top nibble is zero must stay seven characters. Padding it
+// to eight is what Android would never produce.
+assert.strictEqual(
+  shared.cloudGameKey('gb', new Uint8Array(Buffer.from('multiemu-0'))),
+  'gb:1686969',
+);
+
 // --- Encoding ----------------------------------------------------------
 //
 // Every string the user sees is Spanish, and an editor or a script writing

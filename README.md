@@ -232,3 +232,26 @@ v1.8 de Android, Windows empezó en 11.
 
 El script reutiliza la release si ese `versionCode` ya existe, así que
 volver a subir un binario corregido no crea un duplicado.
+
+### La identidad de un cartucho en la nube
+
+Un guardado en la nube se ata a su ROM con `gameKey`, y eso **no es una
+decisión de este repo**: es un contrato con la app de Android, que lo
+construye como `"<sistema>:<romId>"` con `romId = crc32(bytes).toString(16)`.
+Tres detalles que hay que respetar o los dos dispositivos no se ven nunca:
+
+- el prefijo `gb:`, `gba:` o `nds:`, para que dos consolas no colisionen
+  sobre el mismo volcado;
+- el hexadecimal **sin rellenar** — un CRC que empiece por cero da siete
+  caracteres, y rellenarlo a ocho deja de coincidir;
+- el CRC es de la ROM cruda, que es lo que hace que una descarga en `.zip`
+  y un fichero suelto del mismo volcado coincidan.
+
+Y los slots: **99** es la partida guardada (`game.sav`), **0-3** son estados
+completos de máquina, y el 3 es el automático de Android. El 99 llama la
+atención: empezó siendo -1 y se movió cuando resultó que el servidor
+rechaza slots negativos. Subir la partida al slot 0 —que es lo que hacía
+este puerto al principio— aterriza encima de un estado hecho en el móvil.
+
+`cloudGameKey` vive en `src/shared.ts` junto al resto de contratos con el
+repo compartido, y el test lo fija en las dos direcciones.
