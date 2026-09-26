@@ -35,7 +35,10 @@ const settingsPath = userDataDir ? path.join(userDataDir, 'settings.json') : nul
 
 function readSettings() {
   try {
-    return JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    // Strip a leading BOM: the file is documented as hand-editable, and
+    // plenty of Windows editors write UTF-8 with one. JSON.parse rejects it,
+    // which would silently throw away every binding the user had set.
+    return JSON.parse(fs.readFileSync(settingsPath, 'utf8').replace(/^\uFEFF/, ''));
   } catch {
     // Missing on a first run, and unreadable if someone hand-edits it into
     // invalid JSON. Either way the defaults are the right answer.
