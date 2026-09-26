@@ -221,6 +221,13 @@ npm run dist
 node scripts/publish.js changelog.txt
 ```
 
+Las capturas del listing van aparte, y hay que marcarlas o caen en la
+galería de Android:
+
+```
+node scripts/upload-screenshots.js capturas/*.png
+```
+
 La versión y el `versionCode` salen de `package.json`, que es exactamente lo
 que compila el propio `.exe` (`src/hub.js` lo lee de ahí). Tenerlos en dos
 sitios ya provocó una vez que la app se ofreciera a sí misma como
