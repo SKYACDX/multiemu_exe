@@ -13,10 +13,14 @@ const { Notification, app, ipcMain, safeStorage, shell } = require('electron');
 const shared = require('../build/shared.js');
 
 // This build's place in RomHack Hub's versionCode sequence, which is shared
-// across platforms rather than per-platform: 10 is Android v1.8, so the
-// first Windows release is 11 (see docs/app-listing-api.md in the shared
-// repo). Bump it on every published release.
-const VERSION_CODE = 11;
+// across platforms rather than per-platform (see docs/app-listing-api.md in
+// the shared repo): 10 was Android v1.8, so Windows started at 11.
+//
+// Read from package.json rather than written here, because it has to match
+// the release that gets published or the app offers itself as its own
+// update -- which is exactly what happened when the two were kept apart.
+// The publish script reads the same field.
+const VERSION_CODE = require('../package.json').versionCode;
 
 const DOWNLOAD_PAGE = 'https://www.emulatornds.online/app';
 

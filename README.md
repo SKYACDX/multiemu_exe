@@ -213,3 +213,22 @@ hasta que el binario acumula reputación. La opción barata y real es Azure
 Trusted Signing (~10 USD/mes); un certificado OV clásico cuesta varias
 veces eso y tampoco arranca con reputación. Es una decisión de dinero, no
 técnica, y conviene tomarla antes de publicar el primer release.
+
+### Publicar
+
+```
+npm run dist
+node scripts/publish.js changelog.txt
+```
+
+La versión y el `versionCode` salen de `package.json`, que es exactamente lo
+que compila el propio `.exe` (`src/hub.js` lo lee de ahí). Tenerlos en dos
+sitios ya provocó una vez que la app se ofreciera a sí misma como
+actualización, así que **hay que subir `versionCode` antes de construir**,
+no después.
+
+`versionCode` es una secuencia global compartida con Android: 10 fue la
+v1.8 de Android, Windows empezó en 11.
+
+El script reutiliza la release si ese `versionCode` ya existe, así que
+volver a subir un binario corregido no crea un duplicado.
