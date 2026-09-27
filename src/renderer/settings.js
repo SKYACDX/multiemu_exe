@@ -53,6 +53,8 @@ let stored = settings.read();
 let bindings = { ...DEFAULT_BINDINGS, ...(stored.bindings || {}) };
 let dsLayout = stored.dsLayout === 'horizontal' ? 'horizontal' : DEFAULT_DS_LAYOUT;
 let speed = SPEEDS.includes(stored.speed) ? stored.speed : 1;
+// filter.js owns the value and validates it.
+setImageFilter(stored.imageFilter);
 
 function setSpeed(value) {
   if (!SPEEDS.includes(value)) return;
@@ -78,7 +80,7 @@ function persist() {
   // Spread what is already there: this file is not the only writer --
   // hub.js records a dismissed update in it too, and rewriting only these
   // three keys would silently drop that.
-  settings.write({ ...settings.read(), bindings, dsLayout, speed });
+  settings.write({ ...settings.read(), bindings, dsLayout, speed, imageFilter });
 }
 
 rebuildLookups();
@@ -87,6 +89,7 @@ rebuildLookups();
 
 const bindingList = document.getElementById('bindings');
 const layoutSelect = document.getElementById('ds-layout');
+const filterSelect = document.getElementById('image-filter');
 
 // Set while waiting for the user to press something. The emulation loop
 // checks this so a rebind doesn't also move the character.
@@ -208,6 +211,7 @@ document.getElementById('settings-open').addEventListener('click', () => {
   show('settings');
   renderBindings();
   layoutSelect.value = dsLayout;
+  filterSelect.value = imageFilter;
 });
 
 document.getElementById('reset-bindings').addEventListener('click', () => {
@@ -216,6 +220,12 @@ document.getElementById('reset-bindings').addEventListener('click', () => {
   rebuildLookups();
   persist();
   renderBindings();
+});
+
+// Unlike the layout, this applies at once, over a game already running.
+filterSelect.addEventListener('change', () => {
+  setImageFilter(filterSelect.value);
+  persist();
 });
 
 layoutSelect.addEventListener('change', () => {

@@ -64,6 +64,7 @@ function draw() {
     layout.top.data.set(frame);
     ctx.putImageData(layout.top, 0, 0);
   }
+  presentFrame();
 }
 
 // ponytail: setTimeout pacing, so ~1ms of jitter per frame. The audio queue
@@ -282,6 +283,7 @@ function playRom(romPath) {
   emu.fitWindow({ width: canvas.width, height: canvas.height });
   for (const panel of document.querySelectorAll('.panel')) panel.hidden = true;
   canvas.hidden = false;
+  presentFrame();
 
   due = 0;
   loop(++loopToken);
@@ -298,6 +300,7 @@ function stopGame() {
   emu.close();
   audioStop();
   canvas.hidden = true;
+  presentFrame();
   show('picker');
 }
 
