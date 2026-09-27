@@ -6,9 +6,10 @@
 // app's own TypeScript, bundled (see src/shared.ts). This file is only the
 // desktop-side plumbing around it: where downloads land, how the token is
 // stored, and the IPC surface.
+const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const { Notification, app, ipcMain, safeStorage, shell } = require('electron');
+const { BrowserWindow, Notification, app, ipcMain, safeStorage, shell } = require('electron');
 
 const shared = require('../build/shared.js');
 
@@ -98,8 +99,25 @@ function requireToken() {
 
 // ---- Handlers ---------------------------------------------------------
 
+// The installer an in-app update downloaded, left in the temp folder because
+// it was still running when the old version quit. By the next start it has
+// finished, so it can go. A hundred megabytes per update otherwise.
+function removeUpdateInstallers() {
+  const temp = app.getPath('temp');
+  for (const name of fs.readdirSync(temp)) {
+    if (!/^multiemu-.+-setup[.]exe$/.test(name)) continue;
+    try {
+      fs.unlinkSync(path.join(temp, name));
+    } catch {
+      // Still in use when --force-run starts the app before the installer
+      // has exited. The next start gets it.
+    }
+  }
+}
+
 function register() {
   restoreToken();
+  removeUpdateInstallers();
 
   ipcMain.handle('hub:files', (event, params) => shared.listFiles(params));
 
@@ -152,23 +170,77 @@ function register() {
   });
 
   // A newer release for THIS platform, or null.
-  ipcMain.handle('hub:update-check', async () => {
+  async function newerRelease() {
     const { releases } = await shared.listAppReleases({ limit: 20 });
     return releases.find((release) => release.versionCode > VERSION_CODE && shared.isWindowsRelease(release)) ?? null;
+  }
+
+  ipcMain.handle('hub:update-check', newerRelease);
+
+  // Downloads the new installer and runs it over this install, so updating
+  // never means a trip to the website.
+  //
+  // The release is looked up again rather than taken from the check: its
+  // signed download URL expires after five minutes, and the notice may have
+  // been on screen for hours.
+  ipcMain.handle('hub:update-install', async (event) => {
+    const release = await newerRelease();
+    if (!release) throw new Error('No hay ninguna versión nueva');
+
+    const response = await fetch(release.apkUrl);
+    if (!response.ok) throw new Error(`No se pudo descargar la actualización (HTTP ${response.status})`);
+
+    const chunks = [];
+    let received = 0;
+    let lastPercent = -1;
+    for await (const chunk of response.body) {
+      chunks.push(chunk);
+      received += chunk.length;
+      // Once per percent rather than per chunk, which would be thousands of
+      // messages for a hundred-megabyte file.
+      const percent = Math.floor((received / release.apkSize) * 100);
+      if (percent !== lastPercent) {
+        lastPercent = percent;
+        event.sender.send('hub:update-progress', percent);
+      }
+    }
+
+    // The only integrity check the API allows: it publishes a size, not a
+    // hash. What it catches is a connection that dropped halfway, which
+    // would otherwise hand NSIS a truncated installer and a cryptic error.
+    const bytes = Buffer.concat(chunks);
+    if (bytes.length !== release.apkSize) {
+      throw new Error('La descarga llegó incompleta. Inténtalo de nuevo.');
+    }
+    const installer = path.join(app.getPath('temp'), `multiemu-${release.version}-setup.exe`);
+    fs.writeFileSync(installer, bytes);
+
+    // electron-builder's own NSIS switches, the ones electron-updater passes:
+    // /S skips the wizard, --updated installs over the existing directory,
+    // --force-run starts the app again once it is done. Quitting straight
+    // away lets the installer replace files this process has open; the game
+    // save is flushed on the way out like any other close.
+    spawn(installer, ['/S', '--updated', '--force-run'], { detached: true, stdio: 'ignore' }).unref();
+    app.quit();
   });
 
-  // The signed download URL in a release expires in five minutes, so the
-  // button opens the download page instead of the file: whatever the user
-  // clicks there is current no matter how long the notice sat on screen.
+  // The fallback when installing from inside the app fails: the download
+  // page, not the file, because the file's signed URL would have expired.
   ipcMain.handle('hub:open-download', () => shell.openExternal(DOWNLOAD_PAGE));
 
   ipcMain.handle('hub:notify-update', (event, version) => {
     if (!Notification.isSupported()) return false;
     const notification = new Notification({
       title: 'multiemu ' + version + ' disponible',
-      body: 'Haz clic para ir a la página de descarga.',
+      body: 'Haz clic para actualizar.',
     });
-    notification.on('click', () => shell.openExternal(DOWNLOAD_PAGE));
+    // Brings the window forward, where the update bar is already showing.
+    notification.on('click', () => {
+      const win = BrowserWindow.fromWebContents(event.sender);
+      if (!win) return;
+      win.show();
+      win.focus();
+    });
     notification.show();
     return true;
   });

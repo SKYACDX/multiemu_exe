@@ -131,6 +131,8 @@ contextBridge.exposeInMainWorld('hub', {
   download: (file) => ipcRenderer.invoke('hub:download', file),
   updateCheck: () => ipcRenderer.invoke('hub:update-check'),
   openDownload: () => ipcRenderer.invoke('hub:open-download'),
+  installUpdate: () => ipcRenderer.invoke('hub:update-install'),
+  onUpdateProgress: (callback) => ipcRenderer.on('hub:update-progress', (event, percent) => callback(percent)),
   notifyUpdate: (version) => ipcRenderer.invoke('hub:notify-update', version),
   account: () => ipcRenderer.invoke('hub:account'),
   login: (credentials) => ipcRenderer.invoke('hub:login', credentials),

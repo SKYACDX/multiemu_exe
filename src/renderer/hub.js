@@ -66,7 +66,37 @@ document.getElementById('update-dismiss').addEventListener('click', () => {
   }
 });
 
-document.getElementById('update-download').addEventListener('click', () => hub.openDownload());
+// What ipcRenderer.invoke puts in front of every error thrown in the main
+// process. Only the part after it means anything to the user.
+function ipcErrorMessage(error) {
+  return error.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+}
+
+const updateButton = document.getElementById('update-download');
+
+hub.onUpdateProgress((percent) => {
+  updateButton.textContent = percent < 100 ? `Descargando… ${percent}%` : 'Instalando…';
+});
+
+updateButton.addEventListener('click', async () => {
+  // After a failed attempt the button becomes a way out: the website still
+  // works when installing from here doesn't.
+  if (updateButton.dataset.fallback) {
+    hub.openDownload();
+    return;
+  }
+  updateButton.disabled = true;
+  updateButton.textContent = 'Descargando…';
+  try {
+    // Never returns on success: the app closes and the installer reopens it.
+    await hub.installUpdate();
+  } catch (error) {
+    document.getElementById('update-changelog').textContent = ipcErrorMessage(error);
+    updateButton.textContent = 'Abrir la página de descarga';
+    updateButton.dataset.fallback = '1';
+    updateButton.disabled = false;
+  }
+});
 
 setInterval(checkForUpdate, UPDATE_CHECK_INTERVAL_MS);
 
@@ -270,7 +300,7 @@ function saveRow(save) {
     } catch (error) {
       // Not accountStatus: playRom below hides the account panel
       // straight away, so a message left there is never seen.
-      toast(error.message);
+      toast(ipcErrorMessage(error));
     }
     // Reloaded either way: the game was torn down above, so leaving it down
     // on a failed download would strand the user on a dead session.
