@@ -114,6 +114,54 @@ assert.ok(tonePeak > 0, 'the tone ROM produced silence');
 
 assert.throws(() => new gb.GameBoy(new Uint8Array(16)), /invalid ROM header/);
 
+// --- Game Boy link cable ---------------------------------------------------
+//
+// One byte across the cable, each way. The master sends 0x11 on its own
+// clock, the slave waits on it with 0x22, and each writes whatever it
+// received into BGP, the background palette. The screen is all colour 0,
+// whose shade is BGP's low two bits -- so the picture itself says what came
+// across: 0x22 gives shade 2 on the master, 0x11 shade 1 on the slave. A
+// master with no cable reads 0xFF instead (shade 3, black), and that is the
+// control: the colours below only happen if the bytes really swapped.
+function linkTestRom(send, control) {
+  const romBytes = Buffer.alloc(0x8000);
+  Buffer.from([0xc3, 0x50, 0x01]).copy(romBytes, 0x100); // jp $0150
+  Buffer.from([
+    0x3e, send, 0xe0, 0x01, //    ld a,send / ldh [$01],a    -- SB
+    0x3e, control, 0xe0, 0x02, // ld a,ctl / ldh [$02],a     -- SC: start
+    0xf0, 0x02,             // wait: ldh a,[$02]
+    0xcb, 0x7f,             //    bit 7,a                    -- still busy?
+    0x20, 0xfa,             //    jr nz,wait
+    0xf0, 0x01,             //    ldh a,[$01]                -- what came in
+    0xe0, 0x47,             //    ldh [$47],a                -- BGP
+    0x18, 0xfe,             //    jr -2
+  ]).copy(romBytes, 0x150);
+  return new Uint8Array(romBytes);
+}
+const masterRom = linkTestRom(0x11, 0x81); // drives the clock
+const slaveRom = linkTestRom(0x22, 0x80);  // waits on the other's
+
+const cabled = new gb.GbLink(masterRom, slaveRom);
+assert.strictEqual(cabled.width, 160);
+assert.strictEqual(cabled.height, 288, 'two screens');
+for (let i = 0; i < 5; i++) cabled.runFrame();
+const cabledFrame = cabled.frame();
+const slaveScreen = 160 * 144 * 4;
+assert.strictEqual(cabledFrame.length, 160 * 288 * 4);
+assert.strictEqual(cabledFrame[0], 0x55, 'the master did not receive 0x22');
+assert.strictEqual(cabledFrame[slaveScreen], 0xaa, 'the slave did not receive 0x11');
+assert.strictEqual(cabled.hasBattery(0), false);
+cabled.setPlayer(1);
+cabled.setButton(4, true);
+assert.ok(cabled.readAudio(4096) instanceof Int16Array);
+cabled.close();
+
+const uncabled = new gb.GameBoy(masterRom);
+for (let i = 0; i < 5; i++) uncabled.runFrame();
+assert.strictEqual(uncabled.frame()[0], 0x00, 'with no cable the master should read 0xFF');
+
+assert.throws(() => new gb.GbLink(masterRom, new Uint8Array(16)), /Jugador 2/);
+
 // --- GBA -------------------------------------------------------------
 //
 // Hand-assembled rather than loaded from a real ROM: mGBA only needs two

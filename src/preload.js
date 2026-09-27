@@ -56,10 +56,11 @@ function writeSettings(settings) {
 let core = null;
 let buttons = null;
 
-// Only set for Game Boy. mGBA and melonDS both write cartridge RAM straight
-// through to the save file as the game saves, so those two need nothing.
-let savePath = null;
-let lastSaved = null;
+// Game Boy battery saves, which this file writes itself -- mGBA and melonDS
+// write cartridge RAM straight through to the save file as the game saves,
+// so those two need nothing. One entry for a console, two for a linked
+// pair: { path, last (the bytes last written), read () -> current bytes }.
+let batterySaves = [];
 
 // Whole-machine snapshot, next to the ROM like the .sav. Whether the loaded
 // core can actually take one is a separate question -- core/gb can't yet, so
@@ -71,19 +72,30 @@ let statePath = null;
 const SAVE_INTERVAL_MS = 5000;
 
 function persistSave() {
-  if (!savePath) return;
-  const data = Buffer.from(core.getSave());
-  if (lastSaved && lastSaved.equals(data)) return;
-  fs.writeFileSync(savePath, data);
-  lastSaved = data;
+  for (const save of batterySaves) {
+    const data = Buffer.from(save.read());
+    if (save.last && save.last.equals(data)) continue;
+    fs.writeFileSync(save.path, data);
+    save.last = data;
+  }
+}
+
+// Starts tracking one Game Boy battery save, loading what is already on
+// disk into the console first.
+function trackBatterySave(path, read, load) {
+  const save = { path, last: null, read };
+  if (fs.existsSync(path)) {
+    save.last = fs.readFileSync(path);
+    load(save.last);
+  }
+  batterySaves.push(save);
 }
 
 function open(romPath) {
   const sidecar = romPath.replace(/\.[^.]+$/, '.sav');
-  savePath = null;
   // Reset, or the next game's save RAM gets compared against the previous
   // game's bytes and a write that should happen can be skipped.
-  lastSaved = null;
+  batterySaves = [];
   statePath = romPath.replace(/\.[^.]+$/, '.state');
 
   let screens = 1;
@@ -101,11 +113,7 @@ function open(romPath) {
     core = new gb.GameBoy(fs.readFileSync(romPath));
     buttons = GB_BUTTONS;
     if (core.hasBattery()) {
-      savePath = sidecar;
-      if (fs.existsSync(sidecar)) {
-        lastSaved = fs.readFileSync(sidecar);
-        core.loadSave(lastSaved);
-      }
+      trackBatterySave(sidecar, () => core.getSave(), (bytes) => core.loadSave(bytes));
     }
   }
 
@@ -135,7 +143,6 @@ function openLink(romA, romB) {
   if (!system || system !== systemOf(romB)) {
     throw new Error('Los dos juegos tienen que ser de la misma consola: dos de DS, dos de GBA o dos de Game Boy.');
   }
-  if (system === 'gb') throw new Error('El cable link de Game Boy todavía no está disponible.');
   const saveA = romA.replace(/\.[^.]+$/, '.sav');
   const saveB = romB.replace(/\.[^.]+$/, '.sav');
   // Windows paths are case-insensitive, so compare them that way.
@@ -145,16 +152,22 @@ function openLink(romA, romB) {
         'Para intercambiar entre dos partidas del mismo juego, haz una copia de la ROM con otro nombre.',
     );
   }
+  batterySaves = [];
   if (system === 'nds') {
     // By path, like a single DS: images run to 512MB.
     core = new ds.DsLink(romA, saveA, romB, saveB);
     buttons = DS_BUTTONS;
-  } else {
+  } else if (system === 'gba') {
     core = new gba.GbaLink(fs.readFileSync(romA), saveA, fs.readFileSync(romB), saveB);
     buttons = GBA_BUTTONS;
+  } else {
+    core = new gb.GbLink(fs.readFileSync(romA), fs.readFileSync(romB));
+    buttons = GB_BUTTONS;
+    [saveA, saveB].forEach((path, player) => {
+      if (!core.hasBattery(player)) return;
+      trackBatterySave(path, () => core.getSave(player), (bytes) => core.loadSave(player, bytes));
+    });
   }
-  savePath = null;
-  lastSaved = null;
   statePath = null;
   return { width: core.width, height: core.height, screens: 2, audioSampleRate: core.audioSampleRate, system };
 }
@@ -243,8 +256,7 @@ contextBridge.exposeInMainWorld('emu', {
     if (core && core.close) core.close();
     core = null;
     buttons = null;
-    savePath = null;
+    batterySaves = [];
     statePath = null;
-    lastSaved = null;
   },
 });
