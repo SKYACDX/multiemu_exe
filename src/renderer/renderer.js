@@ -12,8 +12,15 @@ let layout = null;
 // game a cloud save belongs to.
 let currentRom = null;
 
+// Set while two GBAs are running on the link cable, and which of them the
+// keyboard is driving.
+let linked = false;
+let linkPlayer = 0;
+
+// Null while linked: the cloud-save screen works on one game, and with two
+// running it would not be clear which.
 function loadedRom() {
-  return currentRom;
+  return linked ? null : currentRom;
 }
 
 // Both the DMG and the GBA run at 59.7275Hz, and emulation is paced against
@@ -76,7 +83,11 @@ function loop(token) {
   const now = performance.now();
   if (due === 0) due = now;
 
-  const catchUpLimit = MAX_CATCHUP * speed;
+  // Linked consoles keep their own time on their own threads, so the speed
+  // setting has nothing to act on; resampling their audio by it would only
+  // make it sound wrong.
+  const rate = linked ? 1 : speed;
+  const catchUpLimit = MAX_CATCHUP * rate;
 
   let ran = 0;
   while (due <= now && ran < catchUpLimit) {
@@ -86,9 +97,9 @@ function loop(token) {
     // queue is only a couple of thousand samples deep, and a frame fills
     // about 800 of them. audio.js resamples by the speed, so fast-forward
     // sounds sped up instead of going silent.
-    audioPush(emu.readAudio(READ_FRAMES), speed);
+    audioPush(emu.readAudio(READ_FRAMES), rate);
 
-    due += FRAME_MS / speed;
+    due += FRAME_MS / rate;
     ran++;
   }
   if (due <= now) due = now; // too far behind to catch up; drop the debt
@@ -145,6 +156,16 @@ function saveOrLoadState(saving) {
   toast(saving ? 'Estado guardado' : 'Estado cargado');
   return true;
 }
+
+// Tab hands the keyboard (and the pad, and the sound) to the other console.
+// Both keep running either way; this only decides which one is listening.
+window.addEventListener('keydown', (event) => {
+  if (!linked || paused || event.key !== 'Tab' || isCapturing() || typingInAField(event)) return;
+  event.preventDefault(); // Tab would move focus otherwise
+  linkPlayer = 1 - linkPlayer;
+  emu.setPlayer(linkPlayer);
+  toast(`Controlas al jugador ${linkPlayer + 1}`);
+});
 
 window.addEventListener('keydown', (event) => {
   if (!currentRom || (event.key !== 'F5' && event.key !== 'F8')) return;
@@ -252,18 +273,23 @@ canvas.addEventListener('mousemove', (event) => {
 // the stylus, or the game sees a permanently held touch.
 window.addEventListener('mouseup', () => emu.releaseTouch());
 
-function playRom(romPath) {
+// partnerRom, when given, is the second GBA on a link cable.
+function playRom(romPath, partnerRom) {
   let size;
   try {
-    size = emu.open(romPath);
+    size = partnerRom ? emu.openLink(romPath, partnerRom) : emu.open(romPath);
   } catch (error) {
     status.textContent = error.message;
     return;
   }
   currentRom = romPath;
+  linked = Boolean(partnerRom);
+  linkPlayer = 0;
 
   const screenHeight = size.height / size.screens;
-  const sideBySide = size.screens === 2 && dsLayout === 'horizontal';
+  // Two players side by side whatever the DS setting says: stacked, each
+  // would get half the height for no reason.
+  const sideBySide = size.screens === 2 && (linked || dsLayout === 'horizontal');
 
   canvas.width = sideBySide ? size.width * 2 : size.width;
   canvas.height = sideBySide ? screenHeight : size.height;
@@ -287,6 +313,7 @@ function playRom(romPath) {
 
   due = 0;
   loop(++loopToken);
+  if (linked) toast('Controlas al jugador 1 · Tab cambia de jugador');
 }
 
 // Without this there is no way out of a game short of closing the window --
@@ -297,6 +324,7 @@ function stopGame() {
   loopToken++;  // any pending timer now belongs to a dead game
   paused = false;
   currentRom = null;
+  linked = false;
   emu.close();
   audioStop();
   canvas.hidden = true;
@@ -308,6 +336,7 @@ function pauseGame() {
   if (!currentRom || paused) return;
   paused = true;
   loopToken++;  // stops the loop without tearing anything down
+  emu.setPaused(true);
   refreshPauseMenu();
   show('pause');
 }
@@ -315,6 +344,7 @@ function pauseGame() {
 function resumeGame() {
   if (!paused) return;
   paused = false;
+  emu.setPaused(false);
   secondStartedAt = 0;
   framesThisSecond = 0;
   for (const panel of document.querySelectorAll('.panel')) panel.hidden = true;
@@ -378,6 +408,13 @@ document.getElementById('pause-cloud').addEventListener('click', () => {
 document.getElementById('open').addEventListener('click', async () => {
   const romPath = await emu.pickRom();
   if (romPath) playRom(romPath);
+});
+
+document.getElementById('link-open').addEventListener('click', async () => {
+  const first = await emu.pickRom('Cable link: juego del jugador 1');
+  if (!first) return;
+  const second = await emu.pickRom('Cable link: juego del jugador 2');
+  if (second) playRom(first, second);
 });
 
 if (emu.initialRom) playRom(emu.initialRom);

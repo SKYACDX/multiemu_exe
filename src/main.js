@@ -7,8 +7,9 @@ const hub = require('./hub');
 // argv[0] is the executable itself.
 const romArgument = process.argv.slice(1).find((argument) => /\.(gbc?|gba|nds)$/i.test(argument));
 
-ipcMain.handle('pick-rom', async () => {
+ipcMain.handle('pick-rom', async (event, title) => {
   const { canceled, filePaths } = await dialog.showOpenDialog({
+    title,
     properties: ['openFile'],
     filters: [{ name: 'ROMs', extensions: ['gb', 'gbc', 'gba', 'nds'] }],
   });

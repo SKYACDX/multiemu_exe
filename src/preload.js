@@ -119,6 +119,30 @@ function open(romPath) {
   };
 }
 
+// Two GBAs on a link cable (see GbaLink in gba_addon.cpp). Each keeps its
+// own save next to its own ROM, written through by its own core -- which is
+// why they cannot share one: two writers on the same .sav would corrupt it.
+function openLink(romA, romB) {
+  if (![romA, romB].every((rom) => /\.gba$/i.test(rom))) {
+    throw new Error('El cable link solo funciona con juegos de GBA, por ahora.');
+  }
+  const saveA = romA.replace(/\.[^.]+$/, '.sav');
+  const saveB = romB.replace(/\.[^.]+$/, '.sav');
+  // Windows paths are case-insensitive, so compare them that way.
+  if (path.resolve(saveA).toLowerCase() === path.resolve(saveB).toLowerCase()) {
+    throw new Error(
+      'Los dos jugadores no pueden usar la misma ROM: compartirían la partida guardada. ' +
+        'Para intercambiar entre dos partidas del mismo juego, haz una copia de la ROM con otro nombre.',
+    );
+  }
+  core = new gba.GbaLink(fs.readFileSync(romA), saveA, fs.readFileSync(romB), saveB);
+  buttons = GBA_BUTTONS;
+  savePath = null;
+  lastSaved = null;
+  statePath = null;
+  return { width: core.width, height: core.height, screens: 2, audioSampleRate: core.audioSampleRate };
+}
+
 setInterval(() => core && persistSave(), SAVE_INTERVAL_MS);
 window.addEventListener('beforeunload', () => core && persistSave());
 
@@ -154,7 +178,8 @@ contextBridge.exposeInMainWorld('emu', {
   // double-clicking a ROM boots straight into it.
   initialRom: argument('rom'),
   open,
-  pickRom: () => ipcRenderer.invoke('pick-rom'),
+  openLink,
+  pickRom: (title) => ipcRenderer.invoke('pick-rom', title),
   fitWindow: (size) => ipcRenderer.invoke('fit-window', size),
   runFrame: () => core.runFrame(),
   frame: () => core.frame(),
@@ -183,6 +208,11 @@ contextBridge.exposeInMainWorld('emu', {
     if (!core.loadState || !statePath || !fs.existsSync(statePath)) return false;
     return core.loadState(new Uint8Array(fs.readFileSync(statePath)));
   },
+  // Link cable only: which console the keyboard, pad and speakers belong
+  // to, and holding both consoles still while the pause menu is open --
+  // they run on threads of their own, so stopping the loop here would not.
+  setPlayer: (player) => core.setPlayer && core.setPlayer(player),
+  setPaused: (paused) => core && core.setPaused && core.setPaused(paused),
   // No-ops on the cores with no touch screen.
   touch: (x, y) => core.touch && core.touch(x, y),
   releaseTouch: () => core.releaseTouch && core.releaseTouch(),

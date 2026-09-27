@@ -10,10 +10,16 @@
 
 #include <fcntl.h>
 
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
+#include "gba_link.h"
 #include "mgba/core/blip_buf.h"
 #include "mgba/core/core.h"
 #include "mgba-util/vfs.h"
@@ -262,8 +268,250 @@ class Gba : public Napi::ObjectWrap<Gba> {
     bool loaded_ = false;
 };
 
+// ---- Link cable ---------------------------------------------------------
+
+// The same loading sequence as Gba's constructor, minus the video buffer
+// and the reset: LinkedGbaSession does those itself, in the order mGBA
+// needs (reset only associates the renderer if the buffer is already set --
+// getting that backwards is a permanently black screen). Kept separate
+// rather than shared with Gba, like the Android side does, so the
+// single-player path this app mostly runs is left exactly as it was.
+mCore* loadLinkedCore(const Napi::Uint8Array& rom, const std::string& savePath) {
+    VFile* romFile = VFileMemChunk(rom.Data(), rom.ByteLength());
+    if (!romFile) return nullptr;
+
+    mCore* core = mCoreFindVF(romFile);
+    if (!core || core->platform(core) != mPLATFORM_GBA) {
+        if (core) core->deinit(core);
+        romFile->close(romFile);
+        return nullptr;
+    }
+    core->init(core);
+    mCoreInitConfig(core, "gba");
+    mCoreConfigSetDefaultIntValue(&core->config, "volume", 0x100);
+    mCoreLoadForeignConfig(core, &core->config);
+
+    if (!core->loadROM(core, romFile)) {
+        mCoreConfigDeinit(&core->config);
+        core->deinit(core);
+        romFile->close(romFile);
+        return nullptr;
+    }
+    VFile* saveFile = VFileOpen(savePath.c_str(), O_CREAT | O_RDWR);
+    if (saveFile) core->loadSave(core, saveFile);
+    return core;
+}
+
+// Pausing a linked pair. Each console runs on its own thread inside
+// LinkedGbaSession, which has no notion of pausing -- on Android there was
+// no pause menu to need one. Rather than change that shared code, each
+// core's runFrame (a plain function pointer in mCore) is swapped for one
+// that first waits at this gate. A console held here between frames also
+// holds its partner, the next time the lockstep protocol makes it wait.
+struct PauseGate {
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool paused = false;
+};
+
+struct GatedCore {
+    PauseGate* gate;
+    void (*runFrame)(mCore*);
+};
+
+// mCore has nowhere to hang data of our own, so the gate is looked up by
+// core. At most two entries, and only while a link is open.
+std::mutex gatedCoresMutex;
+std::unordered_map<mCore*, GatedCore> gatedCores;
+
+void gatedRunFrame(mCore* core) {
+    GatedCore gated;
+    {
+        std::lock_guard<std::mutex> lock(gatedCoresMutex);
+        gated = gatedCores.at(core);
+    }
+    {
+        std::unique_lock<std::mutex> lock(gated.gate->mutex);
+        gated.gate->cv.wait(lock, [&] { return !gated.gate->paused; });
+    }
+    gated.runFrame(core);
+}
+
+// Two GBAs joined by a link cable, for trading and link battles. The
+// engine is the Android app's LinkedGbaSession: each console runs on its
+// own thread at the real frame rate, and mGBA's lockstep protocol makes
+// one wait whenever the other has to catch up mid-transfer. So there is
+// nothing to drive from here -- runFrame is a no-op, and frame() collects
+// whatever each thread finished last.
+//
+// One keyboard, two players: input and audio go to whichever console is
+// active (setPlayer), and the other one keeps running on its own.
+class GbaLink : public Napi::ObjectWrap<GbaLink> {
+   public:
+    static Napi::Function define(Napi::Env env) {
+        return DefineClass(env, "GbaLink",
+                           {
+                               InstanceMethod("runFrame", &GbaLink::runFrame),
+                               InstanceMethod("frame", &GbaLink::frame),
+                               InstanceMethod("setButton", &GbaLink::setButton),
+                               InstanceMethod("readAudio", &GbaLink::readAudio),
+                               InstanceMethod("setPlayer", &GbaLink::setPlayer),
+                               InstanceMethod("setPaused", &GbaLink::setPaused),
+                               InstanceMethod("close", &GbaLink::close),
+                               InstanceAccessor("audioSampleRate", &GbaLink::audioSampleRate, nullptr),
+                               InstanceAccessor("width", &GbaLink::width, nullptr),
+                               InstanceAccessor("height", &GbaLink::height, nullptr),
+                           });
+    }
+
+    // GbaLink(romA, savePathA, romB, savePathB). The two save paths must
+    // differ: each core writes straight through to its own for as long as
+    // it runs, and two writers on one file would corrupt it.
+    explicit GbaLink(const Napi::CallbackInfo& info) : Napi::ObjectWrap<GbaLink>(info) {
+        Napi::Env env = info.Env();
+        if (info.Length() < 4 || !info[0].IsTypedArray() || !info[2].IsTypedArray() ||
+            !info[1].IsString() || !info[3].IsString()) {
+            Napi::TypeError::New(env, "GbaLink(romA, saveA, romB, saveB)").ThrowAsJavaScriptException();
+            return;
+        }
+        mCore* cores[2] = {};
+        for (int player = 0; player < 2; player++) {
+            cores[player] = loadLinkedCore(info[player * 2].As<Napi::Uint8Array>(),
+                                           info[player * 2 + 1].As<Napi::String>());
+            if (!cores[player]) {
+                if (cores[0]) {
+                    mCoreConfigDeinit(&cores[0]->config);
+                    cores[0]->deinit(cores[0]);
+                }
+                std::string message = "El juego del jugador " + std::to_string(player + 1) +
+                                      " no es una ROM de GBA";
+                Napi::Error::New(env, message).ThrowAsJavaScriptException();
+                return;
+            }
+        }
+        {
+            std::lock_guard<std::mutex> lock(gatedCoresMutex);
+            for (mCore* core : cores) {
+                gatedCores[core] = {&gate_, core->runFrame};
+                core->runFrame = gatedRunFrame;
+                cores_.push_back(core);
+            }
+        }
+        // Starts both run threads straight away, and owns the cores from
+        // here on: its destructor joins the threads and deinits them.
+        session_ = std::make_unique<LinkedGbaSession>(cores[0], cores[1]);
+    }
+
+    ~GbaLink() { release(); }
+
+   private:
+    void release() {
+        if (!session_) return;
+        // A paused console would sit at the gate forever and the join in
+        // the session's destructor would never return.
+        setGate(false);
+        session_.reset();
+        std::lock_guard<std::mutex> lock(gatedCoresMutex);
+        for (mCore* core : cores_) gatedCores.erase(core);
+        cores_.clear();
+    }
+
+    void setGate(bool paused) {
+        {
+            std::lock_guard<std::mutex> lock(gate_.mutex);
+            gate_.paused = paused;
+        }
+        gate_.cv.notify_all();
+    }
+
+    bool ready(Napi::Env env) {
+        if (session_) return true;
+        Napi::Error::New(env, "this link cable failed to start").ThrowAsJavaScriptException();
+        return false;
+    }
+
+    void close(const Napi::CallbackInfo&) { release(); }
+
+    void runFrame(const Napi::CallbackInfo&) {}
+
+    void setPaused(const Napi::CallbackInfo& info) {
+        if (!ready(info.Env())) return;
+        setGate(info[0].As<Napi::Boolean>().Value());
+    }
+
+    // Both screens in one frame, player 1 above player 2 -- the same shape
+    // as the DS's two screens, so the renderer lays them out the same way.
+    Napi::Value frame(const Napi::CallbackInfo& info) {
+        if (!ready(info.Env())) return info.Env().Undefined();
+
+        constexpr std::size_t kPixels = 240 * 160;
+        std::vector<uint32_t> screen(kPixels);
+        auto out = Napi::Uint8Array::New(info.Env(), kPixels * 2 * 4);
+        uint8_t* pixels = out.Data();
+        for (int player = 0; player < 2; player++) {
+            // 0xFFRRGGBB, the way Android bitmaps want it.
+            session_->getFramebuffer(player, screen.data());
+            uint8_t* dest = pixels + player * kPixels * 4;
+            for (std::size_t i = 0; i < kPixels; i++) {
+                dest[i * 4 + 0] = (screen[i] >> 16) & 0xFF;
+                dest[i * 4 + 1] = (screen[i] >> 8) & 0xFF;
+                dest[i * 4 + 2] = screen[i] & 0xFF;
+                dest[i * 4 + 3] = 0xFF;
+            }
+        }
+        return out;
+    }
+
+    // Same button ordinals as Gba (enum GBAKey), for the active player.
+    void setButton(const Napi::CallbackInfo& info) {
+        if (!ready(info.Env())) return;
+        int buttonId = info[0].As<Napi::Number>().Int32Value();
+        if (buttonId < 0 || buttonId > 9) return;
+        session_->setButtonPressed(player_, buttonId, info[1].As<Napi::Boolean>().Value());
+    }
+
+    // Lets go of everything on the console being left, or a button held
+    // while switching would stay pressed on it indefinitely.
+    void setPlayer(const Napi::CallbackInfo& info) {
+        if (!ready(info.Env())) return;
+        int player = info[0].As<Napi::Number>().Int32Value();
+        if (player < 0 || player > 1) return;
+        for (int buttonId = 0; buttonId <= 9; buttonId++) {
+            session_->setButtonPressed(player_, buttonId, false);
+        }
+        player_ = player;
+    }
+
+    // Only the active console is heard: two copies of the same soundtrack
+    // a few frames apart is noise. The other one's samples are dropped by
+    // mGBA itself once its buffer is full (src/gba/audio.c only adds a
+    // sample while there is room).
+    Napi::Value readAudio(const Napi::CallbackInfo& info) {
+        if (!ready(info.Env())) return info.Env().Undefined();
+        int capacity = info[0].As<Napi::Number>().Int32Value();
+        if (capacity <= 0) return Napi::Int16Array::New(info.Env(), 0);
+        std::vector<int16_t> samples(static_cast<std::size_t>(capacity) * 2);
+        int frames = session_->readAudioSamples(player_, samples.data(), capacity);
+        auto out = Napi::Int16Array::New(info.Env(), static_cast<std::size_t>(frames) * 2);
+        std::copy(samples.begin(), samples.begin() + frames * 2, out.Data());
+        return out;
+    }
+
+    Napi::Value audioSampleRate(const Napi::CallbackInfo& info) {
+        return Napi::Number::New(info.Env(), kAudioSampleRateHz);
+    }
+    Napi::Value width(const Napi::CallbackInfo& info) { return Napi::Number::New(info.Env(), 240); }
+    Napi::Value height(const Napi::CallbackInfo& info) { return Napi::Number::New(info.Env(), 320); }
+
+    std::unique_ptr<LinkedGbaSession> session_;
+    std::vector<mCore*> cores_;
+    PauseGate gate_;
+    int player_ = 0;
+};
+
 Napi::Object init(Napi::Env env, Napi::Object exports) {
     exports.Set("Gba", Gba::define(env));
+    exports.Set("GbaLink", GbaLink::define(env));
     return exports;
 }
 

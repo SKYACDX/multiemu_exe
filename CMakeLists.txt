@@ -43,12 +43,25 @@ add_library(mgba STATIC IMPORTED)
 set_target_properties(mgba PROPERTIES IMPORTED_LOCATION ${MGBA_LIB})
 target_include_directories(mgba INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/mgba/include)
 
-add_library(gba_addon SHARED src/native/gba_addon.cpp ${CMAKE_JS_SRC})
+# The link cable (two GBAs in one process) is the Android app's own
+# implementation, compiled from the submodule like core/gb. Its only Android
+# dependency, debug logging, is stubbed by src/native/shim.
+set(GBA_LINK_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/multiemu/app/android/gbacore/src/main/cpp)
+
+add_library(gba_addon SHARED src/native/gba_addon.cpp ${GBA_LINK_DIR}/gba_link.cpp ${CMAKE_JS_SRC})
 set_target_properties(gba_addon PROPERTIES PREFIX "" SUFFIX ".node")
-target_include_directories(gba_addon PRIVATE ${CMAKE_JS_INC} ${NODE_ADDON_API_DIR})
+target_include_directories(gba_addon PRIVATE
+    ${CMAKE_JS_INC} ${NODE_ADDON_API_DIR} ${GBA_LINK_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/src/native/shim)
 # shlwapi: mGBA's mCoreConfigPortablePath calls PathRemoveFileSpecW.
 target_link_libraries(gba_addon PRIVATE mgba shlwapi ${CMAKE_JS_LIB})
-target_compile_definitions(gba_addon PRIVATE NAPI_DISABLE_CPP_EXCEPTIONS NAPI_VERSION=8)
+# NDEBUG is not about optimisation here, it is about memory layout.
+# struct mLockstep grows a transferId field when NDEBUG is NOT defined
+# (mgba/core/lockstep.h), and the link code allocates that struct while
+# mgba.lib -- built with /DNDEBUG -- reads it. Built any other way, every
+# field after it would sit at a different offset on each side: the same
+# silent heap corruption as defining JIT_ENABLED for melonDS. Release
+# builds already define it; this keeps a Debug build from breaking it.
+target_compile_definitions(gba_addon PRIVATE NAPI_DISABLE_CPP_EXCEPTIONS NAPI_VERSION=8 NDEBUG)
 
 # melonDS, same deal as mGBA: vendored under third_party/ and prebuilt out
 # of band. See the `build:melonds` script.

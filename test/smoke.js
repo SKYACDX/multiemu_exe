@@ -174,6 +174,104 @@ closing.runFrame();
 closing.close();
 fs.unlinkSync(closingSave); // EPERM/EBUSY here means the core never let go
 
+// --- GBA link cable ---------------------------------------------------
+//
+// A real transfer over the cable, in the serial port's multiplayer mode --
+// the one Pokemon's Cable Club uses. Both consoles run this ROM: each sends
+// 0xBEEF, the parent starts a transfer and waits for it to finish, and each
+// paints its first pixel green only once SIOMULTI1 (the child's word, as
+// seen by everyone after a transfer) reads 0xBEEF. Unlinked, that register
+// never holds it, so green on both screens means data genuinely crossed
+// between the cores.
+//
+// The wait matters. An earlier version restarted a transfer the moment the
+// last one ended and read SIOMULTI1 in that same instant, while it was
+// already being reset for the next one -- and failed, though the cable was
+// working. Real games wait for the busy bit too.
+//
+// So is the five-second pause before the first transfer. The link only
+// attaches after a 240-frame warm-up, the parent a moment before the
+// child, and a transfer started inside that window can leave the parent
+// waiting for good -- 1 run in 3 did, before this. No real game asks for
+// the link that early (Pokemon's Cable Club is minutes away), so the ROM
+// behaves like one instead of like a stress test.
+//
+// Real time rather than stepped frames: the cores run on their own threads,
+// and the link only attaches after a 240-frame warm-up (see gba_link.cpp).
+const linkRom = Buffer.from(gbaRom);
+[
+  0xe3a00404, // 0C0      mov   r0, #0x04000000
+  0xe3a01b01, // 0C4      mov   r1, #0x400
+  0xe3811003, // 0C8      orr   r1, r1, #3
+  0xe5801000, // 0CC      str   r1, [r0]            DISPCNT: mode 3, BG2
+  0xe3a06406, // 0D0      mov   r6, #0x06000000     VRAM
+  0xe3a0101f, // 0D4      mov   r1, #0x1F
+  0xe1c610b0, // 0D8      strh  r1, [r6]            red: not linked yet
+  0xe2800c01, // 0DC      add   r0, r0, #0x100      r0 = 0x04000100
+  0xe3a01000, // 0E0      mov   r1, #0
+  0xe1c013b4, // 0E4      strh  r1, [r0, #0x34]     RCNT = 0: serial modes
+  0xe3a01a02, // 0E8      mov   r1, #0x2000
+  0xe3811003, // 0EC      orr   r1, r1, #3
+  0xe1c012b8, // 0F0      strh  r1, [r0, #0x28]     SIOCNT: multiplayer, 115200
+  0xe3a04cbe, // 0F4      mov   r4, #0xBE00
+  0xe38440ef, // 0F8      orr   r4, r4, #0xEF
+  0xe1c042ba, // 0FC      strh  r4, [r0, #0x2A]     SIOMLT_SEND = 0xBEEF
+  0xe3a05ff8, // 100      mov   r5, #0x3E0          green
+  0xe3a07f4b, // 104      mov   r7, #300            frames to wait
+  0xe1508fba, // 108 vbl: ldrh  r8, [r0, #-0xFA]    VCOUNT
+  0xe35800a0, // 10C      cmp   r8, #160
+  0x1afffffc, // 110      bne   vbl                 until vblank starts
+  0xe1508fba, // 114 out: ldrh  r8, [r0, #-0xFA]
+  0xe35800a0, // 118      cmp   r8, #160
+  0x0afffffc, // 11C      beq   out                 and ends
+  0xe2577001, // 120      subs  r7, r7, #1
+  0x1afffff7, // 124      bne   vbl
+  0xe1d022b8, // 128 loop: ldrh r2, [r0, #0x28]     SIOCNT
+  0xe3120004, // 12C      tst   r2, #4              child?
+  0x1a000004, // 130      bne   check               only the parent starts
+  0xe3822080, // 134      orr   r2, r2, #0x80
+  0xe1c022b8, // 138      strh  r2, [r0, #0x28]     start a transfer
+  0xe1d022b8, // 13C wait: ldrh r2, [r0, #0x28]
+  0xe3120080, // 140      tst   r2, #0x80           still busy?
+  0x1afffffc, // 144      bne   wait
+  0xe1d032b2, // 148 check: ldrh r3, [r0, #0x22]    SIOMULTI1
+  0xe1530004, // 14C      cmp   r3, r4
+  0x1afffff4, // 150      bne   loop
+  0xe1c650b0, // 154      strh  r5, [r6]            green: linked
+  0xeafffffe, // 158      b     .
+].forEach((word, i) => linkRom.writeUInt32LE(word, 0xc0 + i * 4));
+
+function sleep(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+const GREEN = [0x00, 0xff, 0x00, 0xff];
+const linkSaves = [0, 1].map((player) => path.join(os.tmpdir(), `multiemu-smoke-link-${player}.sav`));
+for (const save of linkSaves) fs.writeFileSync(save, Buffer.alloc(65536));
+const link = new gba.GbaLink(new Uint8Array(linkRom), linkSaves[0], new Uint8Array(linkRom), linkSaves[1]);
+assert.strictEqual(link.width, 240);
+assert.strictEqual(link.height, 320);
+const secondScreen = 240 * 160 * 4;
+let linkFrame;
+for (let waited = 0; waited < 15000; waited += 250) {
+  sleep(250);
+  linkFrame = link.frame();
+  if (GREEN.every((byte, i) => linkFrame[i] === byte && linkFrame[secondScreen + i] === byte)) break;
+}
+assert.strictEqual(linkFrame.length, 240 * 320 * 4);
+assert.deepStrictEqual([...linkFrame.slice(0, 4)], GREEN, 'player 1 never received the other console');
+assert.deepStrictEqual(
+  [...linkFrame.slice(secondScreen, secondScreen + 4)], GREEN, 'player 2 never received the other console');
+link.setPlayer(1);
+link.setButton(0, true);
+link.setPlayer(0);
+link.setPaused(true);
+sleep(50);
+link.close(); // hangs here if the pause gate is not opened on close
+for (const save of linkSaves) fs.unlinkSync(save); // and both saves were let go
+assert.throws(
+  () => new gba.GbaLink(new Uint8Array(gbaRom), linkSaves[0], new Uint8Array(1024), linkSaves[1]),
+  /jugador 2/);
+
 // --- DS ----------------------------------------------------------------
 //
 // melonDS validates a cart far more loosely than mGBA does -- an empty file
