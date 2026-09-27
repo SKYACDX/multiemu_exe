@@ -188,6 +188,10 @@ contextBridge.exposeInMainWorld('emu', {
   // written on a timer and at exit, so up to five seconds would be lost.
   close: () => {
     persistSave();
+    // Explicit, not just dropping the reference: the native wrapper would
+    // otherwise live until the garbage collector ran, and with it mGBA's
+    // open handle on the save file.
+    if (core && core.close) core.close();
     core = null;
     buttons = null;
     savePath = null;

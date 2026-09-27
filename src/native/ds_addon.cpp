@@ -87,6 +87,7 @@ class Ds : public Napi::ObjectWrap<Ds> {
                                InstanceMethod("readAudio", &Ds::readAudio),
                                InstanceMethod("saveState", &Ds::saveState),
                                InstanceMethod("loadState", &Ds::loadState),
+                               InstanceMethod("close", &Ds::close),
                                InstanceAccessor("audioSampleRate", &Ds::audioSampleRate, nullptr),
                                InstanceAccessor("width", &Ds::width, nullptr),
                                InstanceAccessor("height", &Ds::height, nullptr),
@@ -156,6 +157,13 @@ class Ds : public Napi::ObjectWrap<Ds> {
         }
         nds_->Start();
         loaded_ = true;
+    }
+
+    // Frees the console now rather than at the garbage collector's
+    // convenience -- an NDS holds the ROM image, which runs to 512MB.
+    void close(const Napi::CallbackInfo&) {
+        nds_.reset();
+        loaded_ = false;
     }
 
    private:

@@ -161,6 +161,19 @@ assert.strictEqual(advance.audioSampleRate, 48000);
 assertAudioRate(advance, 'GBA');
 assertStateRoundTrip(advance, 'GBA');
 
+// close() has to hand the save file back to the OS there and then, not
+// whenever the garbage collector gets round to the wrapper. Bringing a save
+// down from the cloud replaces that file while the app is running, and on
+// Windows an open handle makes the write fail outright -- which is exactly
+// how this was found. Deleting it is the cheapest way to ask the OS whether
+// the handle is really gone.
+const closingSave = path.join(os.tmpdir(), 'multiemu-smoke-close.sav');
+fs.writeFileSync(closingSave, Buffer.alloc(65536));
+const closing = new gba.Gba(new Uint8Array(gbaRom), closingSave);
+closing.runFrame();
+closing.close();
+fs.unlinkSync(closingSave); // EPERM/EBUSY here means the core never let go
+
 // --- DS ----------------------------------------------------------------
 //
 // melonDS validates a cart far more loosely than mGBA does -- an empty file

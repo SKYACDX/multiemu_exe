@@ -40,6 +40,7 @@ class GameBoy : public Napi::ObjectWrap<GameBoy> {
                                InstanceMethod("loadSave", &GameBoy::loadSave),
                                InstanceMethod("readAudio", &GameBoy::readAudio),
                                InstanceAccessor("audioSampleRate", &GameBoy::audioSampleRate, nullptr),
+                               InstanceMethod("close", &GameBoy::close),
                                InstanceAccessor("width", &GameBoy::width, nullptr),
                                InstanceAccessor("height", &GameBoy::height, nullptr),
                            });
@@ -67,6 +68,10 @@ class GameBoy : public Napi::ObjectWrap<GameBoy> {
         }
         gameBoy_ = std::make_unique<gb::GameBoy>(std::move(cartridge));
     }
+
+    // Nothing here holds an OS handle, but every core answers close() so
+    // the layer above doesn't have to know which ones do.
+    void close(const Napi::CallbackInfo&) { gameBoy_.reset(); }
 
    private:
     void runFrame(const Napi::CallbackInfo&) { gameBoy_->runUntilFrame(); }

@@ -250,24 +250,31 @@ function saveRow(save) {
   download.addEventListener('click', async () => {
     const rom = loadedRom();
     if (!rom) {
-      accountStatus.textContent = 'Abre primero el juego al que pertenece este guardado.';
+      toast('Abre primero el juego al que pertenece este guardado.');
       return;
     }
     download.disabled = true;
+
+    // The running core has to let go of the file before it can be replaced.
+    // mGBA keeps the save open and writes through it for the core's whole
+    // lifetime, so replacing it underneath a live game fails outright -- and
+    // would be pointless anyway, since the core would write its own copy back
+    // over it moments later.
+    emu.close();
     try {
       // A battery save and a save state are different files locally, and
       // putting one where the other belongs breaks the game.
       const extension = save.slot === GAME_SAVE_SLOT ? '.sav' : '.state';
       await hub.downloadSave({ id: save.id, savePath: rom.replace(/\.[^.]+$/, extension) });
-      // The core read its save RAM when the cartridge was parsed, so a new
-      // file only takes effect on a reload -- which this app can just do
-      // rather than ask the user for.
-      playRom(rom);
-      return;
+      toast('Guardado traído de la nube');
     } catch (error) {
-      accountStatus.textContent = error.message;
+      // Not accountStatus: playRom below hides the account panel
+      // straight away, so a message left there is never seen.
+      toast(error.message);
     }
-    download.disabled = false;
+    // Reloaded either way: the game was torn down above, so leaving it down
+    // on a failed download would strand the user on a dead session.
+    playRom(rom);
   });
 
   row.append(title, download);

@@ -42,6 +42,7 @@ class Gba : public Napi::ObjectWrap<Gba> {
                                InstanceMethod("readAudio", &Gba::readAudio),
                                InstanceMethod("saveState", &Gba::saveState),
                                InstanceMethod("loadState", &Gba::loadState),
+                               InstanceMethod("close", &Gba::close),
                                InstanceAccessor("audioSampleRate", &Gba::audioSampleRate, nullptr),
                                InstanceAccessor("width", &Gba::width, nullptr),
                                InstanceAccessor("height", &Gba::height, nullptr),
@@ -120,11 +121,24 @@ class Gba : public Napi::ObjectWrap<Gba> {
         loaded_ = true;
     }
 
-    ~Gba() {
+    ~Gba() { release(); }
+
+   private:
+    // Tears the core down now rather than whenever the garbage collector
+    // gets round to the wrapper. That matters because mGBA holds the save
+    // file open and writable for the core's lifetime: anything that wants
+    // to replace that file -- restoring one from the cloud, say -- has to
+    // be able to make it let go first, and has to know it happened.
+    void release() {
         if (!core_) return;
         mCoreConfigDeinit(&core_->config);
         core_->deinit(core_);
+        core_ = nullptr;
+        loaded_ = false;
     }
+
+   public:
+    void close(const Napi::CallbackInfo&) { release(); }
 
    private:
     void runFrame(const Napi::CallbackInfo& info) {
