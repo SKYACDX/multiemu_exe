@@ -1,7 +1,7 @@
 {
   "name": "multiemu",
-  "version": "1.2.0",
-  "versionCode": 13,
+  "version": "1.3.0",
+  "versionCode": 14,
   "description": "multiemu para Windows: emulador de Game Boy, GBA y Nintendo DS",
   "main": "src/main.js",
   "scripts": {
