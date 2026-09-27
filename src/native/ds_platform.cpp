@@ -10,14 +10,16 @@
 // things that were genuinely Android-specific swapped out: logging, POSIX
 // semaphores, dlopen, and the local directory.
 //
-// Scope for now: local single-cart play. Internet play (Net_*), local
-// wireless multiplayer (MP_*) and the DSi-only peripherals are stubbed as
-// safe no-ops. They compile and link, they just don't do anything yet.
+// Internet play goes through libslirp (Net_*), local wireless between two
+// consoles through melonDS's own LocalMP (MP_*). The DSi-only peripherals
+// are stubbed as safe no-ops.
 #include "Platform.h"
 #include "SPI_Firmware.h"
 
+#include "LocalMP.h"
 #include "Net.h"
 #include "Net_Slirp.h"
+#include "ds_platform.h"
 
 #include <windows.h>
 
@@ -266,6 +268,9 @@ void WriteGBASave(const u8* savedata, u32 savelen, u32 writeoffset, u32 writelen
 // settings, and a partial write that landed wrong would leave an image no
 // game can read.
 void WriteFirmware(const Firmware& firmware, u32 writeoffset, u32 writelen, void* userdata) {
+    const auto* context = static_cast<const InstanceContext*>(userdata);
+    if (context && !context->persistFirmware) return;
+
     // melonDS calls this on every firmware SPI write, which comes in bursts
     // -- six identical ones during a single boot, measured on Android. Only
     // real changes are worth a 128K file write, so compare first.
@@ -289,17 +294,53 @@ void WriteFirmware(const Firmware& firmware, u32 writeoffset, u32 writelen, void
 // TODO: persist the emulated RTC's date/time if a game changes it.
 void WriteDateTime(int year, int month, int day, int hour, int minute, int second, void* userdata) {}
 
-// ---- Local multiplayer -- not implemented yet. ----
+// ---- Local wireless ----
+//
+// Two consoles in this one process, talking through melonDS's LocalMP: a
+// shared packet queue where each console is addressed by its instance
+// number. Receiving blocks, with a timeout, until the other console has
+// sent -- which is why a link runs each console on a thread of its own
+// (DsLink in ds_addon.cpp): taking turns on one thread, every exchange
+// would wait out the timeout for a console that is not running.
+//
+// With no link up these all do nothing, and a game searching for others
+// simply finds nobody, the same as a lone real DS.
+static LocalMP* g_localMP = nullptr;
 
-void MP_Begin(void* userdata) {}
-void MP_End(void* userdata) {}
-int MP_SendPacket(u8* data, int len, u64 timestamp, void* userdata) { return 0; }
-int MP_RecvPacket(u8* data, u64* timestamp, void* userdata) { return 0; }
-int MP_SendCmd(u8* data, int len, u64 timestamp, void* userdata) { return 0; }
-int MP_SendReply(u8* data, int len, u64 timestamp, u16 aid, void* userdata) { return 0; }
-int MP_SendAck(u8* data, int len, u64 timestamp, void* userdata) { return 0; }
-int MP_RecvHostPacket(u8* data, u64* timestamp, void* userdata) { return 0; }
-u16 MP_RecvReplies(u8* data, u64 timestamp, u16 aidmask, void* userdata) { return 0; }
+void SetLocalMP(LocalMP* mp) { g_localMP = mp; }
+
+static int Instance(void* userdata) {
+    const auto* context = static_cast<const InstanceContext*>(userdata);
+    return context ? context->instance : 0;
+}
+
+void MP_Begin(void* userdata) {
+    if (g_localMP) g_localMP->Begin(Instance(userdata));
+}
+void MP_End(void* userdata) {
+    if (g_localMP) g_localMP->End(Instance(userdata));
+}
+int MP_SendPacket(u8* data, int len, u64 timestamp, void* userdata) {
+    return g_localMP ? g_localMP->SendPacket(Instance(userdata), data, len, timestamp) : 0;
+}
+int MP_RecvPacket(u8* data, u64* timestamp, void* userdata) {
+    return g_localMP ? g_localMP->RecvPacket(Instance(userdata), data, timestamp) : 0;
+}
+int MP_SendCmd(u8* data, int len, u64 timestamp, void* userdata) {
+    return g_localMP ? g_localMP->SendCmd(Instance(userdata), data, len, timestamp) : 0;
+}
+int MP_SendReply(u8* data, int len, u64 timestamp, u16 aid, void* userdata) {
+    return g_localMP ? g_localMP->SendReply(Instance(userdata), data, len, timestamp, aid) : 0;
+}
+int MP_SendAck(u8* data, int len, u64 timestamp, void* userdata) {
+    return g_localMP ? g_localMP->SendAck(Instance(userdata), data, len, timestamp) : 0;
+}
+int MP_RecvHostPacket(u8* data, u64* timestamp, void* userdata) {
+    return g_localMP ? g_localMP->RecvHostPacket(Instance(userdata), data, timestamp) : 0;
+}
+u16 MP_RecvReplies(u8* data, u64 timestamp, u16 aidmask, void* userdata) {
+    return g_localMP ? g_localMP->RecvReplies(Instance(userdata), data, timestamp, aidmask) : 0;
+}
 
 // ---- Internet play ----
 //
@@ -316,32 +357,44 @@ u16 MP_RecvReplies(u8* data, u64 timestamp, u16 aidmask, void* userdata) { retur
 //
 // Built lazily, on the first packet a game actually sends: most sessions
 // never touch wifi and there is no reason to stand up a network stack for
-// them. Only ever called from the emulation thread.
+// them.
+//
+// Locked, because two linked consoles run on two threads and either may go
+// online. Each registers under its own instance number, so replies reach
+// the console that asked -- melonDS's Net keeps a receive queue per
+// instance for exactly that.
 static Net g_net;
 static bool g_netStarted = false;
+static unsigned g_netInstances = 0;
+static std::mutex g_netMutex;
 
-static Net& EnsureNet() {
+static Net& EnsureNet(int instance) {
     if (!g_netStarted) {
         g_netStarted = true;
         g_net.SetDriver(std::make_unique<Net_Slirp>(
             [](const u8* data, int len) { g_net.RXEnqueue(data, len); }));
-        // One emulated console, so one instance, id 0 -- melonDS's Net
-        // supports several for its multi-window builds.
-        g_net.RegisterInstance(0);
         Log(LogLevel::Info, "Net: slirp driver up\n");
+    }
+    if (!(g_netInstances & (1u << instance))) {
+        g_netInstances |= 1u << instance;
+        g_net.RegisterInstance(instance);
     }
     return g_net;
 }
 
 int Net_SendPacket(u8* data, int len, void* userdata) {
-    EnsureNet().SendPacket(data, len, 0);
+    std::lock_guard<std::mutex> lock(g_netMutex);
+    const int instance = Instance(userdata);
+    EnsureNet(instance).SendPacket(data, len, instance);
     return 0;
 }
 
 int Net_RecvPacket(u8* data, void* userdata) {
+    std::lock_guard<std::mutex> lock(g_netMutex);
     // Net::RecvPacket pumps the driver itself (Driver->RecvCheck), so there
     // is nothing else to tick on a timer.
-    return EnsureNet().RecvPacket(data, 0);
+    const int instance = Instance(userdata);
+    return EnsureNet(instance).RecvPacket(data, instance);
 }
 
 // ---- DSi-only peripherals -- not implemented yet. ----

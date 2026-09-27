@@ -252,14 +252,17 @@ function canvasPixel(event) {
 
 // The DS is the only core with a touch screen, and it is always the second
 // of its two screens -- below the first when stacked, to its right when side
-// by side. The layout says where that lands on the canvas.
+// by side. With two DS on a wireless link there are two of them, one per
+// console, and a click goes to whichever it lands on. The layout lists them.
 function sendTouch(event) {
   const { x, y } = canvasPixel(event);
-  const touchX = x - layout.touchX;
-  const touchY = y - layout.touchY;
-  if (touchX < 0 || touchX >= layout.screenWidth) return;
-  if (touchY < 0 || touchY >= layout.screenHeight) return;
-  emu.touch(touchX, touchY);
+  for (const area of layout.touchAreas) {
+    const touchX = x - area.x;
+    const touchY = y - area.y;
+    if (touchX < 0 || touchX >= area.width || touchY < 0 || touchY >= area.height) continue;
+    emu.touch(touchX, touchY, area.player);
+    return;
+  }
 }
 
 canvas.addEventListener('mousedown', (event) => {
@@ -287,6 +290,9 @@ function playRom(romPath, partnerRom) {
   linkPlayer = 0;
 
   const screenHeight = size.height / size.screens;
+  // Two whole DS consoles side by side, each with its own two screens.
+  const dsLink = linked && size.system === 'nds';
+  const consoleScreenHeight = dsLink ? screenHeight / 2 : screenHeight;
   // Two players side by side whatever the DS setting says: stacked, each
   // would get half the height for no reason.
   const sideBySide = size.screens === 2 && (linked || dsLayout === 'horizontal');
@@ -300,9 +306,21 @@ function playRom(romPath, partnerRom) {
     screenHeight,
     top: ctx.createImageData(size.width, sideBySide ? screenHeight : size.height),
     bottom: sideBySide ? ctx.createImageData(size.width, screenHeight) : null,
-    // Where the second screen starts, which for the DS is the touchable one.
-    touchX: sideBySide ? size.width : 0,
-    touchY: sideBySide ? 0 : screenHeight * (size.screens - 1),
+    // One console screen, for the image filter to keep apart.
+    cellHeight: consoleScreenHeight,
+    // Where the touch screens are: the DS's second screen, or on a
+    // wireless link the bottom screen of each console.
+    touchAreas: dsLink
+      ? [0, 1].map((player) => ({
+          x: player * size.width, y: consoleScreenHeight, width: size.width, height: consoleScreenHeight, player,
+        }))
+      : [{
+          x: sideBySide ? size.width : 0,
+          y: sideBySide ? 0 : screenHeight * (size.screens - 1),
+          width: size.width,
+          height: screenHeight,
+          player: 0,
+        }],
   };
 
   audioStart(size.audioSampleRate);
@@ -411,9 +429,9 @@ document.getElementById('open').addEventListener('click', async () => {
 });
 
 document.getElementById('link-open').addEventListener('click', async () => {
-  const first = await emu.pickRom('Cable link: juego del jugador 1');
+  const first = await emu.pickRom('2 jugadores: juego del jugador 1');
   if (!first) return;
-  const second = await emu.pickRom('Cable link: juego del jugador 2');
+  const second = await emu.pickRom('2 jugadores: juego del jugador 2');
   if (second) playRom(first, second);
 });
 

@@ -119,13 +119,23 @@ function open(romPath) {
   };
 }
 
-// Two GBAs on a link cable (see GbaLink in gba_addon.cpp). Each keeps its
-// own save next to its own ROM, written through by its own core -- which is
-// why they cannot share one: two writers on the same .sav would corrupt it.
+function systemOf(romPath) {
+  if (/\.nds$/i.test(romPath)) return 'nds';
+  if (/\.gba$/i.test(romPath)) return 'gba';
+  if (/\.gbc?$/i.test(romPath)) return 'gb';
+  return null;
+}
+
+// Two consoles connected: a link cable for GBA (GbaLink in gba_addon.cpp),
+// local wireless for DS (DsLink in ds_addon.cpp). Each keeps its own save
+// next to its own ROM, written through by its own core -- which is why they
+// cannot share one: two writers on the same .sav would corrupt it.
 function openLink(romA, romB) {
-  if (![romA, romB].every((rom) => /\.gba$/i.test(rom))) {
-    throw new Error('El cable link solo funciona con juegos de GBA, por ahora.');
+  const system = systemOf(romA);
+  if (!system || system !== systemOf(romB)) {
+    throw new Error('Los dos juegos tienen que ser de la misma consola: dos de DS, dos de GBA o dos de Game Boy.');
   }
+  if (system === 'gb') throw new Error('El cable link de Game Boy todavía no está disponible.');
   const saveA = romA.replace(/\.[^.]+$/, '.sav');
   const saveB = romB.replace(/\.[^.]+$/, '.sav');
   // Windows paths are case-insensitive, so compare them that way.
@@ -135,12 +145,18 @@ function openLink(romA, romB) {
         'Para intercambiar entre dos partidas del mismo juego, haz una copia de la ROM con otro nombre.',
     );
   }
-  core = new gba.GbaLink(fs.readFileSync(romA), saveA, fs.readFileSync(romB), saveB);
-  buttons = GBA_BUTTONS;
+  if (system === 'nds') {
+    // By path, like a single DS: images run to 512MB.
+    core = new ds.DsLink(romA, saveA, romB, saveB);
+    buttons = DS_BUTTONS;
+  } else {
+    core = new gba.GbaLink(fs.readFileSync(romA), saveA, fs.readFileSync(romB), saveB);
+    buttons = GBA_BUTTONS;
+  }
   savePath = null;
   lastSaved = null;
   statePath = null;
-  return { width: core.width, height: core.height, screens: 2, audioSampleRate: core.audioSampleRate };
+  return { width: core.width, height: core.height, screens: 2, audioSampleRate: core.audioSampleRate, system };
 }
 
 setInterval(() => core && persistSave(), SAVE_INTERVAL_MS);
@@ -214,7 +230,8 @@ contextBridge.exposeInMainWorld('emu', {
   setPlayer: (player) => core.setPlayer && core.setPlayer(player),
   setPaused: (paused) => core && core.setPaused && core.setPaused(paused),
   // No-ops on the cores with no touch screen.
-  touch: (x, y) => core.touch && core.touch(x, y),
+  // player picks the console on a DS wireless link; a single DS ignores it.
+  touch: (x, y, player) => core.touch && core.touch(x, y, player),
   releaseTouch: () => core.releaseTouch && core.releaseTouch(),
   // Called when a game is closed: the Game Boy save is otherwise only
   // written on a timer and at exit, so up to five seconds would be lost.

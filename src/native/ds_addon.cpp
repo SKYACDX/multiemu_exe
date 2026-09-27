@@ -12,13 +12,19 @@
 #include <napi.h>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "Args.h"
+#include "LocalMP.h"
 #include "NDS.h"
 #include "NDSCart.h"
 #include "SPI_Firmware.h"
@@ -74,6 +80,79 @@ std::optional<Firmware> LoadSavedFirmware() {
     return Firmware(buffer.data(), static_cast<u32>(buffer.size()));
 }
 
+// A second console on a wireless link needs a MAC address of its own, or
+// the two cannot tell each other apart. Same offsets melonDS's own
+// frontend uses for its extra windows (EmuInstance::customizeFirmware).
+void GiveOwnMac(Firmware& firmware, int instance) {
+    auto& header = firmware.GetHeader();
+    MacAddress mac = header.MacAddr;
+    mac[3] += instance;
+    mac[4] += instance * 0x44;
+    mac[5] += instance * 0x10;
+    mac[0] &= 0xFC;  // never a broadcast address
+    header.MacAddr = mac;
+    header.UpdateChecksum();
+    firmware.UpdateChecksums();
+}
+
+// A console with the cart in, booted and ready to run -- shared by the
+// single console and the wireless link. Both pointers must outlive it:
+// the cart writes the save through savePath's address, and context is the
+// userdata every Platform call about this console gets back.
+std::unique_ptr<NDS> BuildNds(const std::string& romPath, std::string* savePath,
+                              Platform::InstanceContext* context, std::string& error) {
+    std::vector<u8> rom = ReadWholeFile(romPath);
+    if (rom.empty()) {
+        error = "could not read the ROM file";
+        return nullptr;
+    }
+
+    // ParseROM wants the cart's initial SRAM up front, not lazily.
+    NDSCart::NDSCartArgs cartArgs;
+    std::vector<u8> save = ReadWholeFile(*savePath);
+    if (!save.empty()) {
+        auto sram = std::make_unique<u8[]>(save.size());
+        std::copy(save.begin(), save.end(), sram.get());
+        cartArgs.SRAM = std::move(sram);
+        cartArgs.SRAMLength = static_cast<u32>(save.size());
+    }
+
+    auto romData = std::make_unique<u8[]>(rom.size());
+    std::copy(rom.begin(), rom.end(), romData.get());
+
+    // The userdata here (not NDS's own, set below) is what
+    // Platform::WriteNDSSave receives -- see NDSCart.cpp.
+    auto cart = NDSCart::ParseROM(std::move(romData), static_cast<u32>(rom.size()), savePath,
+                                  std::move(cartArgs));
+    if (!cart) {
+        error = "not a Nintendo DS ROM melonDS recognises";
+        return nullptr;
+    }
+
+    // Defaults to FreeBIOS and a generated firmware, so no copyrighted
+    // BIOS dump is required...
+    NDSArgs args;
+    // ...except that a firmware saved by a previous session is reused.
+    // Nintendo WFC settings live in the firmware rather than in any
+    // cartridge, so carrying one image across sessions is what makes
+    // "set the connection up once and every game has it" work, exactly
+    // as on a real console. Both consoles of a link start from it, so
+    // both have the connection.
+    if (auto firmware = LoadSavedFirmware()) {
+        args.Firmware = std::move(*firmware);
+    }
+    if (context->instance > 0) GiveOwnMac(args.Firmware, context->instance);
+
+    auto nds = std::make_unique<NDS>(std::move(args), context);
+    nds->SetNDSCart(std::move(cart));
+    nds->Reset();
+    if (nds->NeedsDirectBoot()) {
+        nds->SetupDirectBoot(savePath->empty() ? "rom.nds" : *savePath);
+    }
+    nds->Start();
+    return nds;
+}
+
 class Ds : public Napi::ObjectWrap<Ds> {
    public:
     static Napi::Function define(Napi::Env env) {
@@ -108,54 +187,12 @@ class Ds : public Napi::ObjectWrap<Ds> {
         const std::string romPath = info[0].As<Napi::String>();
         if (info.Length() > 1 && info[1].IsString()) savePath_ = info[1].As<Napi::String>();
 
-        std::vector<u8> rom = ReadWholeFile(romPath);
-        if (rom.empty()) {
-            Napi::Error::New(env, "could not read the ROM file").ThrowAsJavaScriptException();
+        std::string error;
+        nds_ = BuildNds(romPath, &savePath_, &context_, error);
+        if (!nds_) {
+            Napi::Error::New(env, error).ThrowAsJavaScriptException();
             return;
         }
-
-        // ParseROM wants the cart's initial SRAM up front, not lazily.
-        NDSCart::NDSCartArgs cartArgs;
-        std::vector<u8> save = ReadWholeFile(savePath_);
-        if (!save.empty()) {
-            auto sram = std::make_unique<u8[]>(save.size());
-            std::copy(save.begin(), save.end(), sram.get());
-            cartArgs.SRAM = std::move(sram);
-            cartArgs.SRAMLength = static_cast<u32>(save.size());
-        }
-
-        auto romData = std::make_unique<u8[]>(rom.size());
-        std::copy(rom.begin(), rom.end(), romData.get());
-
-        // The userdata here (not NDS's own, set below) is what
-        // Platform::WriteNDSSave receives -- see NDSCart.cpp.
-        auto cart = NDSCart::ParseROM(std::move(romData), static_cast<u32>(rom.size()),
-                                      &savePath_, std::move(cartArgs));
-        if (!cart) {
-            Napi::Error::New(env, "not a Nintendo DS ROM melonDS recognises")
-                .ThrowAsJavaScriptException();
-            return;
-        }
-
-        // Defaults to FreeBIOS and a generated firmware, so no copyrighted
-        // BIOS dump is required...
-        NDSArgs args;
-        // ...except that a firmware saved by a previous session is reused.
-        // Nintendo WFC settings live in the firmware rather than in any
-        // cartridge, so carrying one image across sessions is what makes
-        // "set the connection up once and every game has it" work, exactly
-        // as on a real console.
-        if (auto firmware = LoadSavedFirmware()) {
-            args.Firmware = std::move(*firmware);
-        }
-
-        nds_ = std::make_unique<NDS>(std::move(args), this);
-        nds_->SetNDSCart(std::move(cart));
-        nds_->Reset();
-        if (nds_->NeedsDirectBoot()) {
-            nds_->SetupDirectBoot(savePath_.empty() ? "rom.nds" : savePath_);
-        }
-        nds_->Start();
         loaded_ = true;
     }
 
@@ -308,13 +345,279 @@ class Ds : public Napi::ObjectWrap<Ds> {
     // Kept alive for the session's whole life: its address is the userdata
     // Platform::WriteNDSSave gets handed back.
     std::string savePath_;
+    // The NDS's own userdata: a console on its own, instance 0.
+    Platform::InstanceContext context_;
     // DS KeyInput is active-low -- a set bit means "not pressed".
     u32 keyMask_ = 0xFFF;
     bool loaded_ = false;
 };
 
+// ---- Local wireless -------------------------------------------------------
+
+// 33513982 Hz / 560190 cycles per frame.
+constexpr double kDsFps = 59.8261;
+
+// Two consoles on local wireless, for trading, battles, Union Room and the
+// like. Each runs on a thread of its own (see the MP_* functions in
+// ds_platform.cpp for why it has to be), paced to the DS frame rate. The
+// JS side never touches either NDS directly: input goes into atomics the
+// console's own thread applies before each frame, and each finished frame
+// is copied out under a lock -- melonDS itself is not safe to poke from
+// two threads at once.
+//
+// One keyboard, two players, same as the GBA link: buttons and sound go to
+// the active console (setPlayer). Touch goes to whichever bottom screen
+// was clicked.
+class DsLink : public Napi::ObjectWrap<DsLink> {
+   public:
+    static Napi::Function define(Napi::Env env) {
+        return DefineClass(env, "DsLink",
+                           {
+                               InstanceMethod("runFrame", &DsLink::runFrame),
+                               InstanceMethod("frame", &DsLink::frame),
+                               InstanceMethod("setButton", &DsLink::setButton),
+                               InstanceMethod("touch", &DsLink::touch),
+                               InstanceMethod("releaseTouch", &DsLink::releaseTouch),
+                               InstanceMethod("readAudio", &DsLink::readAudio),
+                               InstanceMethod("setPlayer", &DsLink::setPlayer),
+                               InstanceMethod("setPaused", &DsLink::setPaused),
+                               InstanceMethod("close", &DsLink::close),
+                               InstanceAccessor("audioSampleRate", &DsLink::audioSampleRate, nullptr),
+                               InstanceAccessor("width", &DsLink::width, nullptr),
+                               InstanceAccessor("height", &DsLink::height, nullptr),
+                           });
+    }
+
+    // DsLink(romA, saveA, romB, saveB). Paths, like Ds. The two save paths
+    // must differ -- each cart writes through to its own.
+    explicit DsLink(const Napi::CallbackInfo& info) : Napi::ObjectWrap<DsLink>(info) {
+        Napi::Env env = info.Env();
+        if (info.Length() < 4 || !info[0].IsString() || !info[1].IsString() ||
+            !info[2].IsString() || !info[3].IsString()) {
+            Napi::TypeError::New(env, "DsLink(romA, saveA, romB, saveB)").ThrowAsJavaScriptException();
+            return;
+        }
+        // Up before either console exists, so both find it when they start.
+        mp_ = std::make_unique<LocalMP>();
+        Platform::SetLocalMP(mp_.get());
+
+        for (int i = 0; i < 2; i++) {
+            Player& p = players_[i];
+            p.context.instance = i;
+            p.context.persistFirmware = i == 0;
+            p.savePath = info[i * 2 + 1].As<Napi::String>();
+            std::string error;
+            p.nds = BuildNds(info[i * 2].As<Napi::String>(), &p.savePath, &p.context, error);
+            if (!p.nds) {
+                release();
+                Napi::Error::New(env, "Jugador " + std::to_string(i + 1) + ": " + error)
+                    .ThrowAsJavaScriptException();
+                return;
+            }
+        }
+        running_ = true;
+        for (int i = 0; i < 2; i++) players_[i].thread = std::thread([this, i] { runLoop(i); });
+    }
+
+    ~DsLink() { release(); }
+
+   private:
+    // A touch as one atomic word: bit 16 says the stylus is down, x and y
+    // sit below it. 0 means released.
+    static constexpr u32 kTouching = 1u << 16;
+
+    struct Player {
+        Platform::InstanceContext context;
+        std::string savePath;
+        std::unique_ptr<NDS> nds;
+        std::thread thread;
+        std::atomic<u32> keyMask{0xFFF};
+        std::atomic<u32> touch{0};
+        // Both screens, stacked, as melonDS packs them (0xAARRGGBB).
+        std::vector<u32> screens = std::vector<u32>(256 * 384, 0);
+        std::mutex screensMutex;
+    };
+
+    void runLoop(int id) {
+        Player& p = players_[id];
+        using clock = std::chrono::steady_clock;
+        const std::chrono::duration<double> frameDuration(1.0 / kDsFps);
+        auto next = clock::now();
+
+        while (running_) {
+            {
+                std::unique_lock<std::mutex> lock(gateMutex_);
+                if (paused_) {
+                    gateCv_.wait(lock, [&] { return !paused_ || !running_; });
+                    // The clock moved on while paused; don't race to catch up.
+                    next = clock::now();
+                }
+            }
+            if (!running_) break;
+
+            NDS& nds = *p.nds;
+            nds.SetKeyMask(p.keyMask.load());
+            const u32 touch = p.touch.load();
+            if (touch & kTouching) {
+                nds.TouchScreen(touch & 0xFF, (touch >> 8) & 0xFF);
+            } else {
+                nds.ReleaseScreen();
+            }
+            nds.RunFrame();
+
+            {
+                std::lock_guard<std::mutex> lock(p.screensMutex);
+                for (int screen = 0; screen < 2; screen++) {
+                    const u32* source = nds.GPU.Framebuffer[nds.GPU.FrontBuffer][screen].get();
+                    if (source) {
+                        std::copy(source, source + 256 * 192, p.screens.begin() + screen * 256 * 192);
+                    }
+                }
+            }
+
+            // Receiving on the wireless link can block inside RunFrame for
+            // a while, so a console that fell behind resumes from now
+            // rather than bursting through frames to catch up.
+            next += std::chrono::duration_cast<clock::duration>(frameDuration);
+            const auto now = clock::now();
+            if (next > now) {
+                std::this_thread::sleep_until(next);
+            } else {
+                next = now;
+            }
+        }
+    }
+
+    // Stops both threads before anything they use goes away: the consoles,
+    // then the queue they talk through. A console waiting on the link wakes
+    // up on its own within LocalMP's receive timeout.
+    void release() {
+        {
+            std::lock_guard<std::mutex> lock(gateMutex_);
+            running_ = false;
+            paused_ = false;
+        }
+        gateCv_.notify_all();
+        for (Player& p : players_) {
+            if (p.thread.joinable()) p.thread.join();
+        }
+        for (Player& p : players_) p.nds.reset();
+        Platform::SetLocalMP(nullptr);
+        mp_.reset();
+        loaded_ = false;
+    }
+
+    bool ready(Napi::Env env) {
+        if (running_) return true;
+        Napi::Error::New(env, "this wireless link failed to start").ThrowAsJavaScriptException();
+        return false;
+    }
+
+    void close(const Napi::CallbackInfo&) { release(); }
+    void runFrame(const Napi::CallbackInfo&) {}
+
+    void setPaused(const Napi::CallbackInfo& info) {
+        if (!ready(info.Env())) return;
+        {
+            std::lock_guard<std::mutex> lock(gateMutex_);
+            paused_ = info[0].As<Napi::Boolean>().Value();
+        }
+        gateCv_.notify_all();
+    }
+
+    // Both consoles in one frame: player 1's two screens, then player 2's.
+    // The renderer puts those two halves side by side.
+    Napi::Value frame(const Napi::CallbackInfo& info) {
+        if (!ready(info.Env())) return info.Env().Undefined();
+        constexpr size_t kPerConsole = 256 * 384;
+        auto out = Napi::Uint8Array::New(info.Env(), kPerConsole * 2 * 4);
+        uint8_t* pixels = out.Data();
+        for (int i = 0; i < 2; i++) {
+            std::lock_guard<std::mutex> lock(players_[i].screensMutex);
+            const u32* source = players_[i].screens.data();
+            uint8_t* target = pixels + i * kPerConsole * 4;
+            for (size_t j = 0; j < kPerConsole; j++) {
+                target[j * 4 + 0] = (source[j] >> 16) & 0xFF;
+                target[j * 4 + 1] = (source[j] >> 8) & 0xFF;
+                target[j * 4 + 2] = source[j] & 0xFF;
+                target[j * 4 + 3] = 0xFF;
+            }
+        }
+        return out;
+    }
+
+    // Same bit order as Ds::setButton, for the active console.
+    void setButton(const Napi::CallbackInfo& info) {
+        if (!ready(info.Env())) return;
+        const int bit = info[0].As<Napi::Number>().Int32Value();
+        if (bit < 0 || bit > 11) return;
+        std::atomic<u32>& mask = players_[player_].keyMask;
+        if (info[1].As<Napi::Boolean>().Value()) {
+            mask &= ~(1u << bit);
+        } else {
+            mask |= 1u << bit;
+        }
+    }
+
+    // touch(x, y, player): bottom-screen pixels, on the console clicked.
+    void touch(const Napi::CallbackInfo& info) {
+        if (!ready(info.Env())) return;
+        const int player = info.Length() > 2 ? info[2].As<Napi::Number>().Int32Value() : player_;
+        if (player < 0 || player > 1) return;
+        const u32 x = static_cast<u32>(std::clamp(info[0].As<Napi::Number>().Int32Value(), 0, 255));
+        const u32 y = static_cast<u32>(std::clamp(info[1].As<Napi::Number>().Int32Value(), 0, 191));
+        players_[player].touch = kTouching | x | (y << 8);
+    }
+
+    void releaseTouch(const Napi::CallbackInfo& info) {
+        if (!ready(info.Env())) return;
+        for (Player& p : players_) p.touch = 0;
+    }
+
+    // Lets go of everything on the console being left behind.
+    void setPlayer(const Napi::CallbackInfo& info) {
+        if (!ready(info.Env())) return;
+        const int player = info[0].As<Napi::Number>().Int32Value();
+        if (player < 0 || player > 1) return;
+        players_[player_].keyMask = 0xFFF;
+        player_ = player;
+    }
+
+    // The active console only. SPU::ReadOutput takes melonDS's own audio
+    // lock, so reading it from here while its thread keeps producing is
+    // safe; the other console's buffer is a ring and just wraps.
+    Napi::Value readAudio(const Napi::CallbackInfo& info) {
+        if (!ready(info.Env())) return info.Env().Undefined();
+        NDS& nds = *players_[player_].nds;
+        const int capacity = info[0].As<Napi::Number>().Int32Value();
+        int frames = std::min(nds.SPU.GetOutputSize(), capacity);
+        if (frames <= 0) return Napi::Int16Array::New(info.Env(), 0);
+        std::vector<s16> samples(static_cast<size_t>(frames) * 2);
+        const int read = nds.SPU.ReadOutput(samples.data(), frames);
+        auto out = Napi::Int16Array::New(info.Env(), static_cast<size_t>(std::max(read, 0)) * 2);
+        if (read > 0) std::copy(samples.begin(), samples.begin() + read * 2, out.Data());
+        return out;
+    }
+
+    Napi::Value audioSampleRate(const Napi::CallbackInfo& info) {
+        return Napi::Number::New(info.Env(), static_cast<int>(kAudioSampleRateHz));
+    }
+    Napi::Value width(const Napi::CallbackInfo& info) { return Napi::Number::New(info.Env(), 256); }
+    Napi::Value height(const Napi::CallbackInfo& info) { return Napi::Number::New(info.Env(), 768); }
+
+    Player players_[2];
+    std::unique_ptr<LocalMP> mp_;
+    std::mutex gateMutex_;
+    std::condition_variable gateCv_;
+    bool paused_ = false;
+    std::atomic<bool> running_{false};
+    int player_ = 0;
+    bool loaded_ = false;
+};
+
 Napi::Object init(Napi::Env env, Napi::Object exports) {
     exports.Set("Ds", Ds::define(env));
+    exports.Set("DsLink", DsLink::define(env));
     exports.Set("setLocalDir", Napi::Function::New(env, [](const Napi::CallbackInfo& info) {
                     Platform::SetLocalDir(info[0].As<Napi::String>());
                 }));

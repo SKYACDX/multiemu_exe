@@ -212,7 +212,7 @@ function presentFrame() {
 
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, gameCanvas);
   gl.uniform2f(uniforms.sourceSize, gameCanvas.width, gameCanvas.height);
-  gl.uniform2f(uniforms.cellSize, layout.screenWidth, layout.screenHeight);
+  gl.uniform2f(uniforms.cellSize, layout.screenWidth, layout.cellHeight);
   gl.uniform1f(uniforms.scale, scale);
   gl.uniform1i(uniforms.mode, imageFilter === 'smooth' ? 2 : 1);
   gl.drawArrays(gl.TRIANGLES, 0, 3);

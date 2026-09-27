@@ -79,10 +79,11 @@ add_library(melonds_teakra STATIC IMPORTED)
 set_target_properties(melonds_teakra PROPERTIES
     IMPORTED_LOCATION ${MELONDS_BUILD}/src/teakra/src/Release/teakra.lib)
 
-# melonDS's src/net, but only the three files internet play actually needs.
-# Its own `net-utils` target is not used on purpose: that one also drags in
-# Net_PCap (libpcap) and LAN/Netplay/LocalMP (ENet), none of which this app
-# has any use for, and both of which are extra dependencies to satisfy.
+# melonDS's src/net, but only the files this app uses: the three behind
+# internet play, and LocalMP, the in-process queue behind two consoles on
+# local wireless. Its own `net-utils` target is not used on purpose: that
+# one also drags in Net_PCap (libpcap) and LAN/Netplay (ENet), neither of
+# which this app has any use for.
 set(MELONDS_NET ${CMAKE_CURRENT_SOURCE_DIR}/third_party/melonds/src/net)
 
 add_library(ds_addon SHARED
@@ -91,6 +92,7 @@ add_library(ds_addon SHARED
     ${MELONDS_NET}/Net.cpp
     ${MELONDS_NET}/Net_Slirp.cpp
     ${MELONDS_NET}/PacketDispatcher.cpp
+    ${MELONDS_NET}/LocalMP.cpp
     ${CMAKE_JS_SRC})
 set_target_properties(ds_addon PROPERTIES PREFIX "" SUFFIX ".node" CXX_STANDARD 20)
 target_include_directories(ds_addon PRIVATE

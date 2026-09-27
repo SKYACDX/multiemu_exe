@@ -306,6 +306,38 @@ assert.strictEqual(nintendoDs.audioSampleRate, 48000);
 assertAudioRate(nintendoDs, 'DS');
 assertStateRoundTrip(nintendoDs, 'DS');
 
+// --- DS local wireless ---------------------------------------------------
+//
+// Structure only: a real wireless session needs a commercial game and is
+// checked by hand. What this pins is everything around it -- both consoles
+// running on their own threads (the active one's audio fills up, which it
+// only does while its thread is emulating), all four screens in one frame,
+// touch reaching either console, and closing while paused returning rather
+// than hanging on a thread held at the pause gate.
+const dsLinkSaves = [0, 1].map((player) => path.join(localDir, `link-${player}.sav`));
+const dsLink = new ds.DsLink(blankRom, dsLinkSaves[0], blankRom, dsLinkSaves[1]);
+assert.strictEqual(dsLink.width, 256);
+assert.strictEqual(dsLink.height, 768, 'two consoles, two screens each');
+sleep(500);
+const dsLinkFrame = dsLink.frame();
+assert.strictEqual(dsLinkFrame.length, 256 * 768 * 4);
+for (let i = 3; i < dsLinkFrame.length; i += 4) {
+  assert.strictEqual(dsLinkFrame[i], 0xff, `DS link pixel ${(i - 3) / 4} is not opaque`);
+}
+assert.ok(dsLink.readAudio(4000).length > 0, 'player 1 is not running');
+dsLink.setPlayer(1);
+sleep(200);
+assert.ok(dsLink.readAudio(4000).length > 0, 'player 2 is not running');
+dsLink.touch(10, 10, 1);
+dsLink.setButton(0, true);
+dsLink.releaseTouch();
+dsLink.setPaused(true);
+sleep(100);
+dsLink.close(); // hangs here if the pause gate is not opened on close
+assert.throws(
+  () => new ds.DsLink(blankRom, dsLinkSaves[0], path.join(localDir, 'missing.nds'), dsLinkSaves[1]),
+  /Jugador 2/);
+
 // --- Release platform detection ----------------------------------------
 //
 // The update notice hangs on this, and the consequence of getting it wrong
