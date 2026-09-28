@@ -12,6 +12,7 @@ export * from '../vendor/multiemu/app/src/api/romHackHubAccount';
 export * from '../vendor/multiemu/app/src/api/themes';
 export * from '../vendor/multiemu/app/src/patchers';
 export { extractFromZip } from '../vendor/multiemu/app/src/zip';
+export { readRomTitle } from '../vendor/multiemu/app/src/romTitle';
 export { crc32 } from '../vendor/multiemu/app/src/patchers/crc32';
 import { crc32 } from '../vendor/multiemu/app/src/patchers/crc32';
 

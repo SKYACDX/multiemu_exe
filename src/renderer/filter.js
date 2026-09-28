@@ -18,7 +18,9 @@ const IMAGE_FILTERS = ['pixel', 'sharp', 'smooth'];
 
 const gameCanvas = document.getElementById('screen');
 const filterCanvas = document.getElementById('screen-gl');
-const gl = filterCanvas.getContext('webgl2', { alpha: false, antialias: false });
+// With alpha, so the bars either side of the picture let the game's cover
+// through (see showCover in hub.js).
+const gl = filterCanvas.getContext('webgl2', { alpha: true, antialias: false });
 
 let imageFilter = 'pixel';
 
@@ -179,9 +181,9 @@ if (gl) {
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
   gl.useProgram(program);
   gl.uniform1i(uniforms.source, 0);
-  // The page's own background, so the letterbox bars look the same as
-  // without a filter.
-  gl.clearColor(16 / 255, 16 / 255, 16 / 255, 1);
+  // Transparent, so the letterbox bars look the same as without a filter:
+  // whatever is behind, the page's background or the game's cover.
+  gl.clearColor(0, 0, 0, 0);
 }
 
 // Called after every frame is drawn, and whenever anything that affects the

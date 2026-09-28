@@ -238,6 +238,9 @@ contextBridge.exposeInMainWorld('hub', {
   uploadSave: (params) => ipcRenderer.invoke('hub:save-upload', params),
   downloadSave: (params) => ipcRenderer.invoke('hub:save-download', params),
   saveStatus: (params) => ipcRenderer.invoke('hub:save-status', params),
+  unpackRom: (filePath) => ipcRenderer.invoke('hub:unpack-rom', filePath),
+  romCover: (romPath) => ipcRenderer.invoke('hub:rom-cover', romPath),
+  sendFeedback: (report) => ipcRenderer.invoke('hub:feedback', report),
   syncSave: (params) => ipcRenderer.invoke('hub:save-sync', params),
   ask: (question) => ipcRenderer.invoke('hub:ask', question),
 });
@@ -253,7 +256,22 @@ contextBridge.exposeInMainWorld('emu', {
   initialRom: argument('rom'),
   open,
   openLink,
-  pickRom: (title) => ipcRenderer.invoke('pick-rom', title),
+  pickRom: (title, extensions) => ipcRenderer.invoke('pick-rom', title, extensions),
+  pickFolder: () => ipcRenderer.invoke('pick-folder'),
+  pickImage: () => ipcRenderer.invoke('pick-image'),
+  // The ROMs directly inside a folder, .zip included -- Android's listFolder,
+  // which does not look in subfolders either.
+  listFolder: (folder) => {
+    const files = [];
+    for (const entry of fs.readdirSync(folder, { withFileTypes: true })) {
+      if (!entry.isFile() || !/\.(gbc?|gba|nds|zip)$/i.test(entry.name)) continue;
+      const file = path.join(folder, entry.name);
+      files.push({ path: file, name: entry.name, size: fs.statSync(file).size });
+    }
+    return files.sort((a, b) => a.name.localeCompare(b.name));
+  },
+  // Size in bytes, or null for a file that is no longer there.
+  fileSize: (file) => (fs.existsSync(file) ? fs.statSync(file).size : null),
   fitWindow: (size) => ipcRenderer.invoke('fit-window', size),
   runFrame: () => {
     ranSinceAutosave = true;
@@ -276,6 +294,11 @@ contextBridge.exposeInMainWorld('emu', {
     return core.loadState(new Uint8Array(fs.readFileSync(file)));
   },
   deleteState: (slot) => fs.rmSync(stateFile(slot), { force: true }),
+  // The running game's state as it is right now, for the cloud.
+  captureState: () => core.saveState(),
+  // DS only: a GBA game in slot-2, with the same .sav it uses on its own.
+  insertGbaCart: (romPath) => core.insertGbaCart(romPath, romPath.replace(/\.[^.]+$/, '.sav')),
+  ejectGbaCart: () => core.ejectGbaCart(),
   // Where a slot lives on disk, for the cloud to upload from and download to.
   stateFile,
   // What the pause menu shows: whether this core can take a state at all,

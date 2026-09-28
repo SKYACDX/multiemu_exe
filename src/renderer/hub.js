@@ -303,23 +303,7 @@ function saveRow(save) {
       return;
     }
 
-    // The running core has to let go of the file before it can be replaced.
-    // mGBA keeps the save open and writes through it for the core's whole
-    // lifetime, so replacing it underneath a live game fails outright -- and
-    // would be pointless anyway, since the core would write its own copy back
-    // over it moments later.
-    emu.close();
-    try {
-      await hub.downloadSave({ id: save.id, savePath: batterySavePath(rom) });
-      toast('Guardado traído de la nube');
-    } catch (error) {
-      // Not accountStatus: playRom below hides the account panel
-      // straight away, so a message left there is never seen.
-      toast(ipcErrorMessage(error));
-    }
-    // Reloaded either way: the game was torn down above, so leaving it down
-    // on a failed download would strand the user on a dead session.
-    playRom(rom);
+    bringGameSave(save);
   });
 
   row.append(title, download);
@@ -384,13 +368,14 @@ const GAME_SAVE_FILENAME = 'game.sav';
 
 const batterySavePath = (rom) => rom.replace(/\.[^.]+$/, '.sav');
 
-document.getElementById('upload-save').addEventListener('click', async (event) => {
+// The game's own save up to the cloud: the account panel's button and the
+// pause menu's. report shows the outcome wherever the button is.
+async function uploadGameSave(report) {
   const rom = loadedRom();
   if (!rom) {
-    accountStatus.textContent = 'Abre un juego primero.';
-    return;
+    report('Abre un juego primero.');
+    return false;
   }
-  event.target.disabled = true;
   try {
     // Keyed by "<system>:<crc32>", the same identity the Android app uses,
     // so one cartridge matches across devices -- src/hub.js builds it.
@@ -400,30 +385,206 @@ document.getElementById('upload-save').addEventListener('click', async (event) =
       slot: GAME_SAVE_SLOT,
       filename: GAME_SAVE_FILENAME,
     });
-    accountStatus.textContent = 'Partida subida.';
-    loadCloudSaves();
+    report('Partida subida.');
+    return true;
   } catch (error) {
-    accountStatus.textContent = ipcErrorMessage(error);
+    report(ipcErrorMessage(error));
+    return false;
   }
+}
+
+// And down, over the local one.
+async function bringGameSave(save) {
+  const rom = loadedRom();
+  // The running core has to let go of the file before it can be replaced.
+  // mGBA keeps the save open and writes through it for the core's whole
+  // lifetime, so replacing it underneath a live game fails outright -- and
+  // would be pointless anyway, since the core would write its own copy back
+  // over it moments later.
+  emu.close();
+  try {
+    await hub.downloadSave({ id: save.id, savePath: batterySavePath(rom) });
+    toast('Guardado traído de la nube');
+  } catch (error) {
+    // A toast, not a panel's status line: playRom below hides the panels
+    // straight away, so a message left there is never seen.
+    toast(ipcErrorMessage(error));
+  }
+  // Reloaded either way: the game was torn down above, so leaving it down
+  // on a failed download would strand the user on a dead session.
+  playRom(rom);
+}
+
+document.getElementById('upload-save').addEventListener('click', async (event) => {
+  event.target.disabled = true;
+  if (await uploadGameSave((text) => (accountStatus.textContent = text))) loadCloudSaves();
   event.target.disabled = false;
 });
 
-// A state slot up to the cloud, from the pause menu. Same slot numbers and
-// file names as Android's handleUploadCloudSlot, so each device sees the
-// other's slots in the same places.
+// ---- Cloud in the pause menu --------------------------------------------
+//
+// Android's save panel (App.tsx): each state slot shows its cloud copy and
+// has Subir/Bajar of its own, and the game's own save has a row with the
+// same two. Fetched each time the menu opens.
+
+// The open game's saves in the cloud.
+let gameCloudSaves = [];
+const cloudSaveIn = (slot) => gameCloudSaves.find((save) => save.slot === slot);
+
+async function refreshGameCloudSaves() {
+  const rom = loadedRom();
+  gameCloudSaves = [];
+  if (!rom || !signedIn) return;
+  try {
+    const key = await hub.gameKey(rom);
+    gameCloudSaves = (await hub.saves()).filter((save) => save.gameKey === key);
+  } catch {
+    return; // offline: the menu just shows no cloud copies
+  }
+  if (paused && loadedRom() === rom) refreshPauseMenu();
+}
+
+// Android's handleUploadCloudSlot: what goes up is the game as it is right
+// now, not what the slot holds. Same slot numbers and file names, so each
+// device sees the other's slots in the same places.
 async function uploadState(slot) {
   try {
-    await hub.uploadSave({
-      romPath: loadedRom(),
-      savePath: emu.stateFile(slot),
-      slot,
-      filename: `slot${slot}.sav`,
-    });
+    await hub.uploadSave({ romPath: loadedRom(), bytes: emu.captureState(), slot, filename: `slot${slot}.sav` });
     toast(`Slot ${slot + 1} subido a la nube`);
+    refreshGameCloudSaves();
   } catch (error) {
     toast(ipcErrorMessage(error));
   }
 }
+
+// Android's handleDownloadCloudSlot: loaded straight away, and kept in the
+// slot too, so its own "Cargar" brings the same state back later.
+async function downloadState(slot) {
+  const save = cloudSaveIn(slot);
+  try {
+    await hub.downloadSave({ id: save.id, savePath: emu.stateFile(slot) });
+    if (!emu.loadState(slot)) throw new Error('Ese estado no se pudo cargar en este juego');
+    toast(`Slot ${slot + 1} traído de la nube`);
+    resumeGame();
+  } catch (error) {
+    toast(ipcErrorMessage(error));
+  }
+}
+
+function showGameSaveRow() {
+  const box = document.getElementById('game-save');
+  box.hidden = !loadedRom();
+  if (!signedIn) {
+    box.replaceChildren(element('p', 'Inicia sesión en Cuenta para sincronizar guardados en la nube.', 'muted'));
+    return;
+  }
+  const cloud = cloudSaveIn(GAME_SAVE_SLOT);
+  const label = element('span', `Guardado del juego · ${
+    cloud ? `en la nube: ${new Date(cloud.updatedAt).toLocaleString()}` : 'sin guardado en la nube'}`);
+  label.style.flex = '1';
+  const up = element('button', 'Subir');
+  up.addEventListener('click', async () => {
+    up.disabled = true;
+    if (await uploadGameSave(toast)) refreshGameCloudSaves();
+    up.disabled = false;
+  });
+  const down = element('button', 'Bajar');
+  down.disabled = !cloud;
+  down.addEventListener('click', () => bringGameSave(cloud));
+  const row = element('div', undefined, 'row');
+  row.append(label, up, down);
+  box.replaceChildren(row);
+}
+
+// ---- Cover art ----------------------------------------------------------
+//
+// Android's themed background: the game's cover, blurred, behind the
+// picture (findCoverArt). Nothing found leaves the background plain.
+let coverToken = 0;
+
+async function showCover(rom) {
+  const token = ++coverToken;
+  const cover = document.getElementById('cover');
+  cover.hidden = true;
+  if (!rom) return;
+  let dataUrl = null;
+  try {
+    dataUrl = await hub.romCover(rom);
+  } catch {
+    return;
+  }
+  // Another game, or none, by the time the search came back.
+  if (token !== coverToken || !dataUrl) return;
+  cover.style.backgroundImage = `url("${dataUrl}")`;
+  cover.hidden = false;
+}
+
+// ---- Feedback -----------------------------------------------------------
+//
+// Android's FeedbackScreen: a report with an optional screenshot, sent to
+// RomHack Hub under the account, or as a guest with an optional name.
+const feedbackText = document.getElementById('feedback-text');
+const feedbackStatus = document.getElementById('feedback-status');
+const feedbackSend = document.getElementById('feedback-send');
+let feedbackImage = null;
+
+function showFeedbackImage() {
+  document.getElementById('feedback-attach').hidden = Boolean(feedbackImage);
+  document.getElementById('feedback-image').hidden = !feedbackImage;
+  if (!feedbackImage) return;
+  document.getElementById('feedback-preview').src = feedbackImage.preview;
+  document.getElementById('feedback-image-name').textContent = feedbackImage.name;
+}
+
+document.getElementById('feedback-open').addEventListener('click', () => {
+  feedbackText.value = '';
+  document.getElementById('feedback-name').value = '';
+  feedbackImage = null;
+  showFeedbackImage();
+  document.getElementById('feedback-form').hidden = false;
+  document.getElementById('feedback-sent').hidden = true;
+  document.getElementById('feedback-guest').hidden = signedIn;
+  feedbackStatus.textContent = '';
+  feedbackSend.disabled = true;
+  show('feedback');
+  feedbackText.focus();
+});
+
+feedbackText.addEventListener('input', () => (feedbackSend.disabled = !feedbackText.value.trim()));
+
+document.getElementById('feedback-attach').addEventListener('click', async () => {
+  feedbackStatus.textContent = '';
+  try {
+    feedbackImage = (await emu.pickImage()) || feedbackImage;
+  } catch (error) {
+    feedbackStatus.textContent = ipcErrorMessage(error);
+  }
+  showFeedbackImage();
+});
+
+document.getElementById('feedback-remove').addEventListener('click', () => {
+  feedbackImage = null;
+  showFeedbackImage();
+});
+
+feedbackSend.addEventListener('click', async () => {
+  feedbackSend.disabled = true;
+  feedbackSend.textContent = 'Enviando…';
+  feedbackStatus.textContent = '';
+  try {
+    await hub.sendFeedback({
+      body: feedbackText.value.trim(),
+      guestName: document.getElementById('feedback-name').value.trim(),
+      image: feedbackImage && feedbackImage.path,
+    });
+    document.getElementById('feedback-form').hidden = true;
+    document.getElementById('feedback-sent').hidden = false;
+  } catch (error) {
+    feedbackStatus.textContent = ipcErrorMessage(error);
+    feedbackSend.disabled = false;
+  }
+  feedbackSend.textContent = 'Enviar';
+});
 
 // ---- Automatic cloud sync of the battery save --------------------------
 //

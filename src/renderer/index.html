@@ -52,6 +52,7 @@
     border-radius: 10px;
     width: min(640px, 92vw);
     max-height: 92vh;
+    overflow-y: auto; /* the pause menu outgrows a small window */
     display: flex;
     flex-direction: column;
     gap: 12px;
@@ -84,6 +85,63 @@
 
   .row { display: flex; gap: 8px; align-items: center; }
   #state-slots { display: flex; flex-direction: column; gap: 6px; }
+  /* A slot's buttons wrap under its name when the window is narrow. */
+  .row.slot { flex-wrap: wrap; }
+  .row.slot button { padding: 6px 12px; }
+
+  /* The game's cover behind the picture (showCover in hub.js), blurred and
+     darkened the way Android's themed background is, so it frames the game
+     rather than competing with it. Slightly oversized, or the blur leaves
+     a pale rim at the window's edges. */
+  #cover {
+    position: fixed;
+    inset: -24px;
+    background-size: cover;
+    background-position: center;
+    filter: blur(12px) brightness(0.45);
+  }
+
+  /* The main menu's recents: Android's two-column cards, a colour per
+     system across the top. */
+  #recents {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 8px;
+    text-align: left;
+  }
+  .recent {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px 10px;
+    background: #1b1b1b;
+    border: 1px solid #2a2a2a;
+    border-top: 3px solid;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .recent:hover { background: #222; }
+  .recent strong { font-weight: 500; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .recent-top { display: flex; justify-content: space-between; align-items: center; }
+  .badge { font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 4px; color: #fff; }
+  .recent .remove { padding: 0 6px; background: none; border: none; color: #777; }
+  .recent .remove:hover { color: #ddd; }
+  /* The cover: grey until one turns up, if one does. */
+  .recent .cover { width: 100%; height: 110px; object-fit: cover; border-radius: 4px; background: #2a2a2a; }
+  #folder-files .cover { width: 40px; height: 40px; object-fit: cover; border-radius: 4px; background: #2a2a2a; flex: none; }
+  #folder-shortcut { justify-content: flex-start; text-align: left; }
+  h2 { font-size: 15px; font-weight: 600; margin: 4px 0 0; text-align: left; }
+
+  textarea {
+    font: inherit;
+    padding: 8px 10px;
+    color: #eee;
+    background: #1b1b1b;
+    border: 1px solid #3d3d3d;
+    border-radius: 6px;
+    resize: vertical;
+  }
+  #feedback-preview { width: 48px; height: 48px; object-fit: cover; border-radius: 4px; }
   .row > input[type="search"],
   .row > input[type="email"],
   .row > input[type="password"],
@@ -187,13 +245,62 @@
   <p class="muted">Game Boy, Game Boy Color, Game Boy Advance o Nintendo DS</p>
   <div class="row" style="justify-content: center">
     <button id="open" class="primary">Abrir ROM</button>
+    <button id="folder-pick">Elegir carpeta</button>
     <button id="browse">Descargar juegos</button>
+    <button id="link-open" title="Dos juegos conectados, para intercambiar o combatir: cable link de Game Boy y GBA, inalámbrica de DS">2 jugadores</button>
+  </div>
+  <div class="row" style="justify-content: center">
     <button id="account-open">Cuenta</button>
     <button id="settings-open">Controles</button>
-    <button id="link-open" title="Dos juegos conectados, para intercambiar o combatir: cable link de Game Boy y GBA, inalámbrica de DS">2 jugadores</button>
+    <button id="feedback-open">Comentarios</button>
   </div>
   <p class="muted">Durante el juego, <kbd>Esc</kbd> vuelve aquí</p>
   <p id="status"></p>
+  <button id="folder-shortcut" class="row" hidden>
+    <span class="title">
+      <strong id="folder-shortcut-name"></strong>
+      <span>Tu carpeta de ROMs · clic para ver</span>
+    </span>
+  </button>
+  <h2>Recientes</h2>
+  <div id="recents"></div>
+  <p id="recents-empty" class="muted">Todavía no has abierto ninguna ROM. Usa una de las opciones de arriba.</p>
+</div>
+
+<div id="folder" class="panel" hidden>
+  <div class="row">
+    <button class="back">Volver</button>
+    <h1 id="folder-name"></h1>
+  </div>
+  <p id="folder-status" class="muted"></p>
+  <ul id="folder-files" class="saves"></ul>
+</div>
+
+<div id="feedback" class="panel" hidden>
+  <div class="row">
+    <button class="back">Volver</button>
+    <h1>Comentarios</h1>
+  </div>
+  <div id="feedback-form" style="display: flex; flex-direction: column; gap: 10px">
+    <p>Reporta un problema o sugerencia</p>
+    <textarea id="feedback-text" rows="6" maxlength="2000" placeholder="¿Qué pasó, o qué te gustaría ver?"></textarea>
+    <div id="feedback-guest" style="display: flex; flex-direction: column; gap: 6px">
+      <input type="text" id="feedback-name" maxlength="60" placeholder="Tu nombre (opcional)" />
+      <p class="muted">Inicia sesión en Cuenta para que le demos seguimiento a tu reporte.</p>
+    </div>
+    <button id="feedback-attach">Adjuntar captura de pantalla (opcional)</button>
+    <div id="feedback-image" class="row" hidden>
+      <img id="feedback-preview" alt="" />
+      <span id="feedback-image-name" style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap"></span>
+      <button id="feedback-remove">Quitar</button>
+    </div>
+    <p id="feedback-status" style="color: #e06c5a; margin: 0"></p>
+    <button id="feedback-send" class="primary" disabled>Enviar</button>
+  </div>
+  <div id="feedback-sent" hidden>
+    <h2>¡Gracias!</h2>
+    <p class="muted">Tu comentario fue enviado.</p>
+  </div>
 </div>
 
 <div id="browser" class="panel" hidden>
@@ -231,6 +338,12 @@
   <div id="state-slots"></div>
 
   <h1 style="font-size: 16px">Guardado de partida</h1>
+  <div id="game-save"></div>
+  <div id="gba-cart" class="row">
+    <span id="gba-cart-name" style="flex: 1"></span>
+    <button id="gba-cart-insert" title="Una ROM de GBA en la ranura 2 del DS: el Parque Compi de Diamante, Perla y Platino trae Pokémon de Rubí, Zafiro, Esmeralda, Rojo Fuego y Verde Hoja">Insertar…</button>
+    <button id="gba-cart-eject">Expulsar</button>
+  </div>
   <div class="row">
     <button id="pause-cloud">Guardados en la nube</button>
     <button id="pause-settings">Controles y pantallas</button>
@@ -296,6 +409,7 @@
   <p id="account-status" class="muted"></p>
 </div>
 
+<div id="cover" hidden></div>
 <canvas id="screen" hidden></canvas>
 <canvas id="screen-gl" hidden></canvas>
 <div id="toast" hidden></div>
@@ -304,4 +418,5 @@
 <script src="hub.js"></script>
 <script src="filter.js"></script>
 <script src="settings.js"></script>
+<script src="library.js"></script>
 <script src="renderer.js"></script>

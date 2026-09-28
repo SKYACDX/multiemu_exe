@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "Args.h"
+#include "GBACart.h"
 #include "LocalMP.h"
 #include "NDS.h"
 #include "NDSCart.h"
@@ -166,6 +167,8 @@ class Ds : public Napi::ObjectWrap<Ds> {
                                InstanceMethod("readAudio", &Ds::readAudio),
                                InstanceMethod("saveState", &Ds::saveState),
                                InstanceMethod("loadState", &Ds::loadState),
+                               InstanceMethod("insertGbaCart", &Ds::insertGbaCart),
+                               InstanceMethod("ejectGbaCart", &Ds::ejectGbaCart),
                                InstanceMethod("close", &Ds::close),
                                InstanceAccessor("audioSampleRate", &Ds::audioSampleRate, nullptr),
                                InstanceAccessor("width", &Ds::width, nullptr),
@@ -325,6 +328,43 @@ class Ds : public Napi::ObjectWrap<Ds> {
         return Napi::Boolean::New(info.Env(), nds_->DoSavestate(&state) && !state.Error);
     }
 
+    // insertGbaCart(gbaRomPath, gbaSavePath) -> false if melonDS does not
+    // take it as a GBA ROM. A GBA game in the DS's slot-2, which is how
+    // Diamond/Pearl/Platinum's Pal Park and HeartGold/SoulSilver bring
+    // Pokemon over from a third-generation game -- ported from Android's
+    // nativeInsertGbaCart (ds_jni.cpp). The save is the same .sav the GBA
+    // game uses when played on its own, so the transfer sees what was
+    // caught there. melonDS takes mGBA's .sav as is, including the 16 bytes
+    // of clock data mGBA appends for Ruby/Sapphire/Emerald.
+    Napi::Value insertGbaCart(const Napi::CallbackInfo& info) {
+        if (!ready(info.Env())) return info.Env().Undefined();
+
+        std::vector<u8> rom = ReadWholeFile(info[0].As<Napi::String>());
+        if (rom.empty()) return Napi::Boolean::New(info.Env(), false);
+        // Put back if this one is refused: a cart already in writes through
+        // the same string.
+        const std::string previousSavePath = gbaSavePath_;
+        gbaSavePath_ = info[1].As<Napi::String>();
+        std::vector<u8> save = ReadWholeFile(gbaSavePath_);
+
+        // The userdata is what Platform::WriteGBASave gets back: the save's
+        // path, kept alive in gbaSavePath_ for as long as the cart is in.
+        auto cart = GBACart::ParseROM(rom.data(), static_cast<u32>(rom.size()),
+                                      save.empty() ? nullptr : save.data(),
+                                      static_cast<u32>(save.size()), &gbaSavePath_);
+        if (!cart) {
+            gbaSavePath_ = previousSavePath;
+            return Napi::Boolean::New(info.Env(), false);
+        }
+        nds_->SetGBACart(std::move(cart));
+        return Napi::Boolean::New(info.Env(), true);
+    }
+
+    void ejectGbaCart(const Napi::CallbackInfo& info) {
+        if (!ready(info.Env())) return;
+        nds_->EjectGBACart();
+    }
+
     Napi::Value width(const Napi::CallbackInfo& info) {
         return Napi::Number::New(info.Env(), kScreenWidth);
     }
@@ -345,6 +385,8 @@ class Ds : public Napi::ObjectWrap<Ds> {
     // Kept alive for the session's whole life: its address is the userdata
     // Platform::WriteNDSSave gets handed back.
     std::string savePath_;
+    // The same for the GBA cart in slot-2, if one is in.
+    std::string gbaSavePath_;
     // The NDS's own userdata: a console on its own, instance 0.
     Platform::InstanceContext context_;
     // DS KeyInput is active-low -- a set bit means "not pressed".

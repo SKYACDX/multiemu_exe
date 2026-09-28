@@ -7,7 +7,9 @@
 // desktop-side plumbing around it: where downloads land, how the token is
 // stored, and the IPC surface.
 const { spawn } = require('child_process');
+const crypto = require('crypto');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const zlib = require('zlib');
 const { BrowserWindow, Notification, app, dialog, ipcMain, safeStorage, shell } = require('electron');
@@ -93,6 +95,69 @@ function gameKey(romPath) {
   return shared.cloudGameKey(system, new Uint8Array(fs.readFileSync(romPath)));
 }
 
+const COVER_RETRY_MS = 7 * 24 * 60 * 60 * 1000;
+
+// The start of a ROM, enough for readRomTitle, and which system it is for.
+// Out of a .zip too, without unpacking it: a DS image in there runs to
+// 512MB and only the first 0x200 bytes matter. Walks the zip's local file
+// headers to the first ROM, then inflates just the first stretch of it --
+// Z_SYNC_FLUSH makes zlib hand back what a cut-off stream decodes to
+// instead of failing. Null if there is no ROM to be found that way.
+function romHeader(romPath) {
+  const extension = path.extname(romPath).slice(1).toLowerCase();
+  const file = fs.openSync(romPath, 'r');
+  try {
+    if (extension !== 'zip') {
+      const header = Buffer.alloc(0x200);
+      fs.readSync(file, header, 0, header.length, 0);
+      return { extension, header };
+    }
+    let offset = 0;
+    for (let entry = 0; entry < 16; entry++) {
+      const local = Buffer.alloc(30);
+      if (fs.readSync(file, local, 0, 30, offset) < 30 || local.readUInt32LE(0) !== 0x04034b50) return null;
+      const nameLength = local.readUInt16LE(26);
+      const name = Buffer.alloc(nameLength);
+      fs.readSync(file, name, 0, nameLength, offset + 30);
+      const dataStart = offset + 30 + nameLength + local.readUInt16LE(28);
+      const inner = path.extname(name.toString()).slice(1).toLowerCase();
+      if (ROM_EXTENSIONS.includes(inner)) {
+        const chunk = Buffer.alloc(64 * 1024);
+        const read = fs.readSync(file, chunk, 0, chunk.length, dataStart);
+        const stored = local.readUInt16LE(8) === 0;
+        const header = stored
+          ? chunk.subarray(0, read)
+          : zlib.inflateRawSync(chunk.subarray(0, read), { finishFlush: zlib.constants.Z_SYNC_FLUSH });
+        return { extension: inner, header: header.subarray(0, 0x200) };
+      }
+      // Bit 3: the size comes after the data, so the next entry can't be found.
+      if (local.readUInt16LE(6) & 8) return null;
+      offset = dataStart + local.readUInt32LE(18);
+    }
+    return null;
+  } finally {
+    fs.closeSync(file);
+  }
+}
+
+// Where a downloaded or unpacked ROM lands, and its save next to it. The
+// same game opened again finds its own file, untouched. A different dump
+// under the same name gets a name of its own instead of replacing that
+// file: the save beside it belongs to the first one, and pairing it with
+// other bytes can break the game.
+function keepRom(name, bytes) {
+  const romPath = userFile('roms', path.basename(name));
+  if (!fs.existsSync(romPath)) {
+    fs.writeFileSync(romPath, bytes);
+    return romPath;
+  }
+  const view = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (fs.readFileSync(romPath).equals(view)) return romPath;
+  const renamed = romPath.replace(/(\.[^.]+)$/, ` (${zlib.crc32(view).toString(16)})$1`);
+  fs.writeFileSync(renamed, view);
+  return renamed;
+}
+
 function requireToken() {
   if (!token) throw new Error('No has iniciado sesión');
   return token;
@@ -128,7 +193,7 @@ function register() {
   // main process has no such restriction. Cached for the session because
   // the same thumbnails come back with every search.
   const covers = new Map();
-  ipcMain.handle('hub:cover', async (event, url) => {
+  async function coverDataUrl(url) {
     if (!url) return null;
     if (covers.has(url)) return covers.get(url);
 
@@ -144,6 +209,43 @@ function register() {
       // A missing cover is a blank square, not an error worth reporting.
     }
     covers.set(url, dataUrl);
+    return dataUrl;
+  }
+  ipcMain.handle('hub:cover', (event, url) => coverDataUrl(url));
+
+  // The cover of a ROM file, as a data: URL, or null -- for the background
+  // behind the game, and the recents and ROM folder lists. Android's
+  // findCoverArt: the title in the ROM's own header, searched in the
+  // catalogue. Kept on disk once found, since the menu asks for up to forty
+  // at every start; a ROM with none is asked about again after a week, in
+  // case the catalogue has one by then.
+  ipcMain.handle('hub:rom-cover', async (event, romPath) => {
+    const key = crypto.createHash('sha1').update(romPath.toLowerCase()).digest('hex');
+    const found = userFile('covers', `${key}.txt`);
+    const missing = userFile('covers', `${key}.none`);
+    if (fs.existsSync(found)) return fs.readFileSync(found, 'utf8');
+    if (fs.existsSync(missing) && Date.now() - fs.statSync(missing).mtimeMs < COVER_RETRY_MS) return null;
+
+    // findCoverArt's own search, spelled out: it swallows a failed request,
+    // and offline must not be remembered as "has no cover".
+    let url = null;
+    try {
+      const rom = romHeader(romPath);
+      const title = rom && shared.readRomTitle(new Uint8Array(rom.header), rom.extension);
+      if (title) {
+        const platform = SYSTEM_BY_EXTENSION[rom.extension] || 'gb';
+        const { files } = await shared.listFiles({ platform, q: title, limit: 5 });
+        url = files.find((file) => file.coverImageUrl)?.coverImageUrl ?? null;
+      }
+    } catch {
+      return null; // offline, or unreadable: tried again next time
+    }
+    if (!url) {
+      fs.writeFileSync(missing, '');
+      return null;
+    }
+    const dataUrl = await coverDataUrl(url);
+    if (dataUrl) fs.writeFileSync(found, dataUrl);
     return dataUrl;
   });
   ipcMain.handle('hub:platforms', () => shared.listPlatforms());
@@ -165,9 +267,20 @@ function register() {
       throw new Error('El archivo descargado no contiene ninguna ROM que este emulador pueda abrir');
     }
 
-    const romPath = userFile('roms', path.basename(name));
-    fs.writeFileSync(romPath, romBytes);
-    return romPath;
+    return keepRom(name, romBytes);
+  });
+
+  // A .zip opened by hand or from the ROM folder, the way Android's file
+  // picker takes one: unpacked to the same place as the catalogue's
+  // downloads, because the save is kept next to the ROM and needs somewhere
+  // that stays put. Anything else is a ROM already and comes back as is.
+  ipcMain.handle('hub:unpack-rom', (event, filePath) => {
+    if (!/\.zip$/i.test(filePath)) return filePath;
+    const unpacked = shared.extractFromZip(new Uint8Array(fs.readFileSync(filePath)), ROM_EXTENSIONS);
+    if (!unpacked) {
+      throw new Error(`"${path.basename(filePath)}" no contiene ninguna ROM que este emulador pueda abrir`);
+    }
+    return keepRom(unpacked.name, unpacked.bytes);
   });
 
   // A newer release for THIS platform, or null.
@@ -281,11 +394,14 @@ function register() {
   // Android reserves exactly this numbering (GAME_SAVE_CLOUD_SLOT), and
   // uploading a battery save to slot 0 -- which this used to do -- would
   // land on top of a save state made on the phone.
-  ipcMain.handle('hub:save-upload', async (event, { romPath, savePath, slot, filename }) => {
-    if (!fs.existsSync(savePath)) {
+  //
+  // bytes, when given, go up instead of savePath's contents: a state taken
+  // from the running game, which is what Android's slot "Subir" sends.
+  ipcMain.handle('hub:save-upload', async (event, { romPath, savePath, bytes: given, slot, filename }) => {
+    if (!given && !fs.existsSync(savePath)) {
       throw new Error('Este juego todavía no ha guardado nada');
     }
-    const bytes = new Uint8Array(fs.readFileSync(savePath));
+    const bytes = given || new Uint8Array(fs.readFileSync(savePath));
     await shared.uploadCloudSave(requireToken(), gameKey(romPath), slot, bytes, filename);
     return zlib.crc32(bytes);
   });
@@ -320,6 +436,28 @@ function register() {
     if (crc === lastCrc) return lastCrc;
     await shared.uploadCloudSave(requireToken(), gameKey(romPath), slot, bytes, filename);
     return crc;
+  });
+
+  // Android's feedback screen (FeedbackScreen.tsx, docs/feedback-api.md):
+  // signed in it goes under the account, otherwise as a guest with an
+  // optional name. The screenshot goes up first and its key rides along.
+  ipcMain.handle('hub:feedback', async (event, { body, guestName, image }) => {
+    let imageKey;
+    if (image) {
+      const extension = path.extname(image).slice(1).toLowerCase();
+      const type = extension === 'jpg' ? 'image/jpeg' : `image/${extension}`;
+      imageKey = await shared.uploadFeedbackScreenshot(
+        new Uint8Array(fs.readFileSync(image)), path.basename(image), type, token || undefined,
+      );
+    }
+    await shared.sendFeedback({
+      body,
+      deviceInfo: `Windows ${os.release()}`,
+      // As releases are named: 1.9, not 1.9.0.
+      appVersion: app.getVersion().replace(/\.0$/, ''),
+      imageKey,
+      guestName: token ? undefined : guestName || undefined,
+    }, token || undefined);
   });
 
   // Android's Alert with named buttons, as the native dialog. Resolves to

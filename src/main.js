@@ -1,3 +1,4 @@
+const fs = require('fs');
 const path = require('path');
 const { app, BrowserWindow, dialog, ipcMain, screen } = require('electron');
 
@@ -7,13 +8,41 @@ const hub = require('./hub');
 // argv[0] is the executable itself.
 const romArgument = process.argv.slice(1).find((argument) => /\.(gbc?|gba|nds)$/i.test(argument));
 
-ipcMain.handle('pick-rom', async (event, title) => {
+// A .zip is offered too, like Android's file picker: the renderer hands it
+// to hub:unpack-rom before opening it.
+ipcMain.handle('pick-rom', async (event, title, extensions = ['gb', 'gbc', 'gba', 'nds', 'zip']) => {
   const { canceled, filePaths } = await dialog.showOpenDialog({
     title,
     properties: ['openFile'],
-    filters: [{ name: 'ROMs', extensions: ['gb', 'gbc', 'gba', 'nds'] }],
+    filters: [{ name: 'ROMs', extensions }],
   });
   return canceled ? null : filePaths[0];
+});
+
+// Android's "Elegir carpeta": the folder whose ROMs the main menu lists.
+ipcMain.handle('pick-folder', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog({
+    title: 'Tu carpeta de ROMs',
+    properties: ['openDirectory'],
+  });
+  return canceled ? null : filePaths[0];
+});
+
+// A screenshot to attach to a report, with a preview for the form. Android
+// caps these at 8MB, which is also what the upload accepts.
+const IMAGE_TYPES = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp' };
+ipcMain.handle('pick-image', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog({
+    title: 'Adjuntar captura de pantalla',
+    properties: ['openFile'],
+    filters: [{ name: 'Imágenes', extensions: Object.keys(IMAGE_TYPES) }],
+  });
+  if (canceled) return null;
+  const file = filePaths[0];
+  const type = IMAGE_TYPES[path.extname(file).slice(1).toLowerCase()];
+  const bytes = fs.readFileSync(file);
+  if (bytes.length > 8 * 1024 * 1024) throw new Error('La imagen pesa más de 8MB, elige una más ligera.');
+  return { path: file, name: path.basename(file), preview: `data:${type};base64,${bytes.toString('base64')}` };
 });
 
 // Each console has its own shape -- a DS is portrait stacked and landscape

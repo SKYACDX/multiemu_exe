@@ -292,6 +292,10 @@ function playRom(romPath, partnerRom) {
   currentRom = romPath;
   linked = Boolean(partnerRom);
   linkPlayer = 0;
+  // Opened from the pause menu (a save brought down from the cloud) this
+  // is still set, and would keep the new game's keys ignored.
+  paused = false;
+  gbaCartName = null; // a new console has an empty slot-2
 
   const screenHeight = size.height / size.screens;
   // Two whole DS consoles side by side, each with its own two screens.
@@ -336,6 +340,8 @@ function playRom(romPath, partnerRom) {
   due = 0;
   loop(++loopToken);
   if (linked) toast('Controlas al jugador 1 · Tab cambia de jugador');
+  if (!linked) rememberRom(romPath);
+  showCover(loadedRom());
   startCloudSync();
 }
 
@@ -351,6 +357,7 @@ function stopGame() {
   emu.close();
   audioStop();
   canvas.hidden = true;
+  showCover(null);
   presentFrame();
   show('picker');
 }
@@ -361,6 +368,7 @@ function pauseGame() {
   loopToken++;  // stops the loop without tearing anything down
   emu.setPaused(true);
   refreshPauseMenu();
+  refreshGameCloudSaves();
   show('pause');
 }
 
@@ -389,14 +397,18 @@ window.addEventListener('keydown', (event) => {
 
 // One row of the pause menu's states, laid out like Android's save panel:
 // three slots saved by hand, then the automatic one, which can only be
-// loaded. Signed in, a slot can also go up to the cloud; bringing one down
-// is in the account panel's list.
+// loaded. Signed in, each hand-saved slot also shows its cloud copy and has
+// Subir/Bajar -- see uploadState and downloadState in hub.js.
 function stateSlotRow(slot, savedAt) {
   const auto = slot === AUTO_STATE_SLOT;
-  const row = element('div', undefined, 'row');
-  const label = element('span', `${auto ? 'Automático' : stateSlotName(slot)} · ${
-    savedAt ? new Date(savedAt).toLocaleString() : 'vacío'}`);
-  label.style.flex = '1';
+  const cloud = !auto && signedIn ? cloudSaveIn(slot) : null;
+  const row = element('div', undefined, 'row slot');
+  const label = element('div', undefined, 'title');
+  label.append(
+    element('strong', auto ? 'Automático' : stateSlotName(slot)),
+    element('span', savedAt ? new Date(savedAt).toLocaleString() : 'Vacío'),
+  );
+  if (cloud) label.append(element('span', ` · Nube: ${new Date(cloud.updatedAt).toLocaleString()}`));
   row.append(label);
 
   const button = (text, onClick, disabled = false) => {
@@ -413,7 +425,10 @@ function stateSlotRow(slot, savedAt) {
   button(slot === 0 ? 'Cargar (F8)' : 'Cargar', () => {
     if (saveOrLoadState(false, slot)) resumeGame();
   }, !savedAt);
-  if (!auto && signedIn) button('Subir', () => uploadState(slot), !savedAt);
+  if (!auto && signedIn) {
+    button('Subir', () => uploadState(slot));
+    button('Bajar', () => downloadState(slot), !cloud);
+  }
   if (!auto) {
     button('Borrar', () => {
       if (!confirm(`¿Borrar el contenido del slot ${slot + 1}?`)) return;
@@ -430,6 +445,13 @@ function refreshPauseMenu() {
   document.getElementById('state-slots').replaceChildren(
     ...(info.supported ? info.slots.map((savedAt, index) => stateSlotRow(index === 3 ? AUTO_STATE_SLOT : index, savedAt)) : []),
   );
+  showGameSaveRow();
+  // Android's "Cartucho GBA": only a DS on its own has a slot-2 here.
+  document.getElementById('gba-cart').hidden = linked || !/\.nds$/i.test(currentRom);
+  document.getElementById('gba-cart-name').textContent = gbaCartName
+    ? `Cartucho GBA: ${gbaCartName}`
+    : 'Cartucho GBA: ninguno';
+  document.getElementById('gba-cart-eject').disabled = !gbaCartName;
   document.getElementById('speed').value = String(speed);
   document.getElementById('speed-note').hidden = speed === 1;
   document.getElementById('fps').textContent = measuredFps
@@ -439,6 +461,31 @@ function refreshPauseMenu() {
 
 document.getElementById('resume').addEventListener('click', resumeGame);
 document.getElementById('quit').addEventListener('click', stopGame);
+
+// The GBA game in the DS's slot-2, for Pal Park and the like: Android's
+// handleInsertGbaCart. Only a name to show; the cart itself lives in the
+// core, and a newly opened game starts with the slot empty.
+let gbaCartName = null;
+
+document.getElementById('gba-cart-insert').addEventListener('click', async () => {
+  const picked = await emu.pickRom('Cartucho de GBA para la ranura 2 del DS', ['gba', 'zip']);
+  if (!picked) return;
+  try {
+    const rom = await hub.unpackRom(picked);
+    if (!emu.insertGbaCart(rom)) throw new Error('Ese archivo no es una ROM de GBA reconocible');
+    gbaCartName = fileName(rom);
+    toast('Cartucho insertado');
+  } catch (error) {
+    toast(ipcErrorMessage(error));
+  }
+  refreshPauseMenu();
+});
+
+document.getElementById('gba-cart-eject').addEventListener('click', () => {
+  emu.ejectGbaCart();
+  gbaCartName = null;
+  refreshPauseMenu();
+});
 
 
 document.getElementById('speed').addEventListener('change', (event) => {
@@ -456,14 +503,14 @@ document.getElementById('pause-cloud').addEventListener('click', () => {
 
 document.getElementById('open').addEventListener('click', async () => {
   const romPath = await emu.pickRom();
-  if (romPath) playRom(romPath);
+  if (romPath) openRomFile(romPath);
 });
 
 document.getElementById('link-open').addEventListener('click', async () => {
   const first = await emu.pickRom('2 jugadores: juego del jugador 1');
   if (!first) return;
   const second = await emu.pickRom('2 jugadores: juego del jugador 2');
-  if (second) playRom(first, second);
+  if (second) openRomFile(first, second);
 });
 
 if (emu.initialRom) playRom(emu.initialRom);
