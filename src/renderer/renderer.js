@@ -392,6 +392,12 @@ function refreshPauseMenu() {
 
   document.getElementById('save-state').disabled = !info.supported;
   document.getElementById('load-state').disabled = !info.supported || !info.savedAt;
+  // Written on its own every 45s and on closing, for when the emulator
+  // closes before anyone saved -- see autosave in preload.js.
+  document.getElementById('auto-state-info').textContent = info.supported
+    ? `Automático: ${info.autoSavedAt ? new Date(info.autoSavedAt).toLocaleString() : 'vacío'}`
+    : '';
+  document.getElementById('load-auto-state').disabled = !info.autoSavedAt;
   document.getElementById('speed').value = String(speed);
   document.getElementById('speed-note').hidden = speed === 1;
   document.getElementById('fps').textContent = measuredFps
@@ -408,6 +414,12 @@ document.getElementById('save-state').addEventListener('click', () => {
 
 document.getElementById('load-state').addEventListener('click', () => {
   if (saveOrLoadState(false)) resumeGame();
+});
+
+document.getElementById('load-auto-state').addEventListener('click', () => {
+  if (!emu.loadState(true)) return toast('No se pudo cargar el estado automático');
+  toast('Estado automático cargado');
+  resumeGame();
 });
 
 document.getElementById('speed').addEventListener('change', (event) => {

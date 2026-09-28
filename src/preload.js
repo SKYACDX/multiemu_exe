@@ -97,6 +97,7 @@ function open(romPath) {
   // game's bytes and a write that should happen can be skipped.
   batterySaves = [];
   statePath = romPath.replace(/\.[^.]+$/, '.state');
+  ranSinceAutosave = false;
 
   let screens = 1;
   if (/\.nds$/i.test(romPath)) {
@@ -172,8 +173,40 @@ function openLink(romA, romB) {
   return { width: core.width, height: core.height, screens: 2, audioSampleRate: core.audioSampleRate, system };
 }
 
+// Through a temp file: dying halfway through a write must not leave a
+// truncated state where the last good one was.
+function writeState(target) {
+  fs.writeFileSync(target + '.tmp', Buffer.from(core.saveState()));
+  fs.renameSync(target + '.tmp', target);
+}
+
+// The Android app's automatic slot (AUTOSAVE_SLOT in App.tsx): a state
+// written every 45s and whenever the window is hidden or closed, so a crash
+// or a killed process costs at most that much. Only once the game has run
+// since the last one, or reopening the game and not touching it would
+// write its title screen over the state it was meant to recover.
+const AUTOSAVE_INTERVAL_MS = 45_000;
+let ranSinceAutosave = false;
+const autoStatePath = () => statePath && statePath.replace(/\.state$/, '.auto.state');
+
+function autosave() {
+  if (!core || !core.saveState || !statePath || !ranSinceAutosave) return;
+  try {
+    writeState(autoStatePath());
+    ranSinceAutosave = false;
+  } catch {
+    // Best effort, like Android's: nobody asked for this one.
+  }
+}
+
 setInterval(() => core && persistSave(), SAVE_INTERVAL_MS);
-window.addEventListener('beforeunload', () => core && persistSave());
+setInterval(autosave, AUTOSAVE_INTERVAL_MS);
+document.addEventListener('visibilitychange', () => document.hidden && autosave());
+window.addEventListener('beforeunload', () => {
+  if (!core) return;
+  persistSave();
+  autosave();
+});
 
 // Everything RomHack Hub, forwarded to the main process -- see src/hub.js
 // for why it lives there rather than here.
@@ -210,7 +243,10 @@ contextBridge.exposeInMainWorld('emu', {
   openLink,
   pickRom: (title) => ipcRenderer.invoke('pick-rom', title),
   fitWindow: (size) => ipcRenderer.invoke('fit-window', size),
-  runFrame: () => core.runFrame(),
+  runFrame: () => {
+    ranSinceAutosave = true;
+    return core.runFrame();
+  },
   frame: () => core.frame(),
   setButton: (name, pressed) => {
     const ordinal = buttons[name];
@@ -221,21 +257,22 @@ contextBridge.exposeInMainWorld('emu', {
   // slots; add them here when someone actually wants a second one.
   saveState: () => {
     if (!core.saveState || !statePath) return false;
-    fs.writeFileSync(statePath, Buffer.from(core.saveState()));
+    writeState(statePath);
     return true;
   },
-  // What the pause menu shows about the saved state: whether this core can
-  // take one at all, whether there is one on disk, and how old it is.
+  // What the pause menu shows about the saved states: whether this core can
+  // take one at all, and when the manual and the automatic one were written.
   stateInfo: () => {
-    const supported = Boolean(core && core.saveState);
-    if (!supported || !statePath || !fs.existsSync(statePath)) {
-      return { supported, savedAt: null };
-    }
-    return { supported, savedAt: fs.statSync(statePath).mtime.toISOString() };
+    const supported = Boolean(core && core.saveState && statePath);
+    const savedAt = (file) =>
+      supported && fs.existsSync(file) ? fs.statSync(file).mtime.toISOString() : null;
+    return { supported, savedAt: savedAt(statePath), autoSavedAt: savedAt(autoStatePath()) };
   },
-  loadState: () => {
-    if (!core.loadState || !statePath || !fs.existsSync(statePath)) return false;
-    return core.loadState(new Uint8Array(fs.readFileSync(statePath)));
+  // auto picks the automatic state over the one saved by hand.
+  loadState: (auto) => {
+    const file = auto ? autoStatePath() : statePath;
+    if (!core.loadState || !file || !fs.existsSync(file)) return false;
+    return core.loadState(new Uint8Array(fs.readFileSync(file)));
   },
   // Link cable only: which console the keyboard, pad and speakers belong
   // to, and holding both consoles still while the pause menu is open --
@@ -250,6 +287,7 @@ contextBridge.exposeInMainWorld('emu', {
   // written on a timer and at exit, so up to five seconds would be lost.
   close: () => {
     persistSave();
+    autosave();
     // Explicit, not just dropping the reference: the native wrapper would
     // otherwise live until the garbage collector ran, and with it mGBA's
     // open handle on the save file.
