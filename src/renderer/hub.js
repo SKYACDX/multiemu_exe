@@ -217,8 +217,13 @@ const session = document.getElementById('session');
 const cloudSaves = document.getElementById('cloud-saves');
 
 let pendingToken = null;
+// Kept here so the pause menu can offer cloud buttons without asking the
+// main process every time it opens.
+let signedIn = false;
+hub.account().then((account) => (signedIn = Boolean(account)));
 
 function showSession(username) {
+  signedIn = true;
   loginForm.hidden = true;
   totpForm.hidden = true;
   session.hidden = false;
@@ -265,7 +270,7 @@ async function loadCloudSaves() {
 function slotLabel(slot) {
   if (slot === GAME_SAVE_SLOT) return 'Partida guardada';
   if (slot === 3) return 'Estado automático';
-  return `Estado ${slot + 1}`;
+  return `Slot ${slot + 1}`;
 }
 
 function saveRow(save) {
@@ -285,6 +290,19 @@ function saveRow(save) {
     }
     download.disabled = true;
 
+    // A state goes to its own slot and waits there to be loaded from the
+    // pause menu. Nothing holds those files open, so the game can keep going.
+    if (save.slot !== GAME_SAVE_SLOT) {
+      try {
+        await hub.downloadSave({ id: save.id, savePath: emu.stateFile(save.slot) });
+        toast(`${slotLabel(save.slot)} traído. Cárgalo desde el menú de pausa.`);
+      } catch (error) {
+        toast(ipcErrorMessage(error));
+      }
+      download.disabled = false;
+      return;
+    }
+
     // The running core has to let go of the file before it can be replaced.
     // mGBA keeps the save open and writes through it for the core's whole
     // lifetime, so replacing it underneath a live game fails outright -- and
@@ -292,10 +310,7 @@ function saveRow(save) {
     // over it moments later.
     emu.close();
     try {
-      // A battery save and a save state are different files locally, and
-      // putting one where the other belongs breaks the game.
-      const extension = save.slot === GAME_SAVE_SLOT ? '.sav' : '.state';
-      await hub.downloadSave({ id: save.id, savePath: rom.replace(/\.[^.]+$/, extension) });
+      await hub.downloadSave({ id: save.id, savePath: batterySavePath(rom) });
       toast('Guardado traído de la nube');
     } catch (error) {
       // Not accountStatus: playRom below hides the account panel
@@ -349,6 +364,7 @@ totpForm.addEventListener('submit', async (event) => {
 
 document.getElementById('logout').addEventListener('click', async () => {
   await hub.logout();
+  signedIn = false;
   session.hidden = true;
   loginForm.hidden = false;
   accountStatus.textContent = '';
@@ -363,52 +379,179 @@ document.getElementById('logout').addEventListener('click', async () => {
 // repo). Reading the commit that introduced the constant rather than the
 // one that last changed it is how this got picked wrong the first time.
 const GAME_SAVE_SLOT = 99;
+// The file name Android uploads the battery save under.
+const GAME_SAVE_FILENAME = 'game.sav';
 
-// The desktop app keeps a single save state per game rather than numbered
-// slots, so it uploads as slot 0 and can bring any of them down.
-const DESKTOP_STATE_SLOT = 0;
+const batterySavePath = (rom) => rom.replace(/\.[^.]+$/, '.sav');
 
-async function upload(button, { suffix, slot, filename, done }) {
+document.getElementById('upload-save').addEventListener('click', async (event) => {
   const rom = loadedRom();
   if (!rom) {
     accountStatus.textContent = 'Abre un juego primero.';
     return;
   }
-  button.disabled = true;
+  event.target.disabled = true;
   try {
     // Keyed by "<system>:<crc32>", the same identity the Android app uses,
     // so one cartridge matches across devices -- src/hub.js builds it.
-    await hub.uploadSave({
+    syncedCrc = await hub.uploadSave({
       romPath: rom,
-      savePath: rom.replace(/\.[^.]+$/, suffix),
-      slot,
-      filename,
+      savePath: batterySavePath(rom),
+      slot: GAME_SAVE_SLOT,
+      filename: GAME_SAVE_FILENAME,
     });
-    accountStatus.textContent = done;
+    accountStatus.textContent = 'Partida subida.';
     loadCloudSaves();
   } catch (error) {
-    accountStatus.textContent = error.message;
+    accountStatus.textContent = ipcErrorMessage(error);
   }
-  button.disabled = false;
+  event.target.disabled = false;
+});
+
+// A state slot up to the cloud, from the pause menu. Same slot numbers and
+// file names as Android's handleUploadCloudSlot, so each device sees the
+// other's slots in the same places.
+async function uploadState(slot) {
+  try {
+    await hub.uploadSave({
+      romPath: loadedRom(),
+      savePath: emu.stateFile(slot),
+      slot,
+      filename: `slot${slot}.sav`,
+    });
+    toast(`Slot ${slot + 1} subido a la nube`);
+  } catch (error) {
+    toast(ipcErrorMessage(error));
+  }
 }
 
-document.getElementById('upload-save').addEventListener('click', (event) =>
-  upload(event.target, {
-    suffix: '.sav',
-    slot: GAME_SAVE_SLOT,
-    filename: 'game.sav',
-    done: 'Partida subida.',
-  }),
-);
+// ---- Automatic cloud sync of the battery save --------------------------
+//
+// Android's autoSyncGameSave and checkGameSaveConflict (App.tsx): while
+// signed in, the game's own save goes up every 45s when it changed. Before
+// the first upload for a game, it is compared with the cloud's, and if the
+// two differ the user picks which one wins -- pushing blind would overwrite
+// progress made on the phone.
+const CLOUD_SYNC_INTERVAL_MS = 45_000;
 
-document.getElementById('upload-state').addEventListener('click', (event) =>
-  upload(event.target, {
-    suffix: '.state',
-    slot: DESKTOP_STATE_SLOT,
-    filename: `slot${DESKTOP_STATE_SLOT}.sav`,
-    done: 'Estado subido.',
-  }),
-);
+// The CRC the cloud holds as of the last upload or download, and whether
+// the comparison has been settled for the game that is open. Both start over
+// with every game (see startCloudSync).
+let syncedCrc = null;
+let syncChecked = false;
+// The comparison in flight, so a timer tick during its question does not
+// ask a second time.
+let syncChecking = null;
+// Set when the question was put off: no syncing this game until it is
+// opened again, when the question comes back.
+let syncPutOff = false;
+
+function startCloudSync() {
+  syncedCrc = null;
+  syncChecked = false;
+  syncChecking = null;
+  syncPutOff = false;
+  if (signedIn) checkCloudSave();
+}
+
+function checkCloudSave() {
+  if (!syncChecking) {
+    // Cleared only if still the current one: taking the cloud's save
+    // reopens the game, which starts a comparison of its own.
+    const check = compareWithCloud().finally(() => {
+      if (syncChecking === check) syncChecking = null;
+    });
+    syncChecking = check;
+  }
+  return syncChecking;
+}
+
+async function compareWithCloud() {
+  const rom = loadedRom();
+  if (!rom) return;
+  const savePath = batterySavePath(rom);
+  let status;
+  try {
+    status = await hub.saveStatus({ romPath: rom, savePath, slot: GAME_SAVE_SLOT });
+  } catch {
+    return; // offline: the next tick tries again
+  }
+  if (loadedRom() !== rom) return;
+
+  if (!status.remote) {
+    syncChecked = true; // nothing up there yet; the next tick creates it
+    return;
+  }
+  if (status.localCrc === status.remote.crc) {
+    syncedCrc = status.remote.crc;
+    syncChecked = true;
+    return;
+  }
+
+  const date = new Date(status.remote.updatedAt).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short', hour12: false });
+  // Android's alert cannot be dismissed without an answer; this dialog can
+  // (Esc, the X), so the last button is what dismissing means. Here that is
+  // "later" rather than either side -- a closed window is not a choice to
+  // overwrite anything.
+  const choice = status.localCrc === null
+    ? await hub.ask({
+        title: 'Guardado en la nube encontrado',
+        message: `Este juego no tiene datos locales, pero sí un guardado en la nube del ${date}. ¿Descargarlo?`,
+        buttons: ['Descargar', 'No'],
+      })
+    : await hub.ask({
+        title: 'El guardado de este juego no coincide con la nube',
+        message: `La nube tiene una versión del ${date}. ¿Cuál quieres conservar?`,
+        buttons: ['La nube', 'Este equipo', 'Más tarde'],
+      });
+  // Closed, or switched to another game, while the question was up.
+  if (loadedRom() !== rom) return;
+  if (choice === 2) {
+    syncPutOff = true;
+    return;
+  }
+  const keepCloud = choice === 0;
+
+  try {
+    if (keepCloud) {
+      // As with "Traer": the core has to let go of the file first, and
+      // reopening runs this comparison again, which then finds them equal.
+      emu.close();
+      await hub.downloadSave({ id: status.remote.id, savePath });
+      toast('Guardado traído de la nube');
+      playRom(rom);
+    } else if (status.localCrc !== null) {
+      syncedCrc = await hub.uploadSave({ romPath: rom, savePath, slot: GAME_SAVE_SLOT, filename: GAME_SAVE_FILENAME });
+      syncChecked = true;
+    } else {
+      syncChecked = true; // no local save and the cloud's declined
+    }
+  } catch (error) {
+    toast(ipcErrorMessage(error));
+    if (keepCloud) playRom(rom);
+  }
+}
+
+async function syncCloudSave() {
+  const rom = loadedRom();
+  if (!rom || !signedIn || syncPutOff) return;
+  // Signed in after the game opened: settle the comparison first.
+  if (!syncChecked) return checkCloudSave();
+  try {
+    syncedCrc = await hub.syncSave({
+      romPath: rom,
+      savePath: batterySavePath(rom),
+      slot: GAME_SAVE_SLOT,
+      filename: GAME_SAVE_FILENAME,
+      lastCrc: syncedCrc,
+    });
+  } catch {
+    // Best effort, like Android's: the next tick or the button retries.
+  }
+}
+
+setInterval(syncCloudSave, CLOUD_SYNC_INTERVAL_MS);
+document.addEventListener('visibilitychange', () => document.hidden && syncCloudSave());
 
 document.getElementById('account-open').addEventListener('click', async () => {
   show('account');

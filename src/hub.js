@@ -9,7 +9,8 @@
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const { BrowserWindow, Notification, app, ipcMain, safeStorage, shell } = require('electron');
+const zlib = require('zlib');
+const { BrowserWindow, Notification, app, dialog, ipcMain, safeStorage, shell } = require('electron');
 
 const shared = require('../build/shared.js');
 
@@ -276,18 +277,64 @@ function register() {
   // belonging to the game that is open.
   ipcMain.handle('hub:game-key', (event, romPath) => gameKey(romPath));
 
-  // slot -1 is the in-game battery save; 0-3 are whole-machine states.
-  // Android reserves exactly this numbering (GAME_SAVE_CLOUD_SLOT = -1), and
+  // Slot 99 is the in-game battery save; 0-3 are whole-machine states.
+  // Android reserves exactly this numbering (GAME_SAVE_CLOUD_SLOT), and
   // uploading a battery save to slot 0 -- which this used to do -- would
   // land on top of a save state made on the phone.
   ipcMain.handle('hub:save-upload', async (event, { romPath, savePath, slot, filename }) => {
     if (!fs.existsSync(savePath)) {
       throw new Error('Este juego todavía no ha guardado nada');
     }
-    const key = gameKey(romPath);
     const bytes = new Uint8Array(fs.readFileSync(savePath));
-    await shared.uploadCloudSave(requireToken(), key, slot, bytes, filename);
-    return key;
+    await shared.uploadCloudSave(requireToken(), gameKey(romPath), slot, bytes, filename);
+    return zlib.crc32(bytes);
+  });
+
+  // For the check Android makes when a game opens (checkGameSaveConflict in
+  // App.tsx): the CRC of the local battery save and of the cloud's, to tell
+  // whether they differ before asking which one to keep. The cloud's has to
+  // be downloaded for that -- the API lists no checksum -- but it is a few
+  // kilobytes. Null for a side that has nothing.
+  ipcMain.handle('hub:save-status', async (event, { romPath, savePath, slot }) => {
+    const key = gameKey(romPath);
+    const remote = (await shared.listCloudSaves(requireToken())).find(
+      (save) => save.gameKey === key && save.slot === slot,
+    );
+    return {
+      localCrc: fs.existsSync(savePath) ? zlib.crc32(fs.readFileSync(savePath)) : null,
+      remote: remote && {
+        id: remote.id,
+        updatedAt: remote.updatedAt,
+        crc: zlib.crc32(await shared.downloadCloudSave(token, remote.id)),
+      },
+    };
+  });
+
+  // One tick of Android's automatic upload (autoSyncGameSave): the battery
+  // save goes up only if it changed since the last sync. Returns the CRC the
+  // cloud now holds, for the next tick to compare against.
+  ipcMain.handle('hub:save-sync', async (event, { romPath, savePath, slot, filename, lastCrc }) => {
+    if (!fs.existsSync(savePath)) return lastCrc;
+    const bytes = new Uint8Array(fs.readFileSync(savePath));
+    const crc = zlib.crc32(bytes);
+    if (crc === lastCrc) return lastCrc;
+    await shared.uploadCloudSave(requireToken(), gameKey(romPath), slot, bytes, filename);
+    return crc;
+  });
+
+  // Android's Alert with named buttons, as the native dialog. Resolves to
+  // the index of the button picked.
+  ipcMain.handle('hub:ask', async (event, { title, message, buttons }) => {
+    const { response } = await dialog.showMessageBox(BrowserWindow.fromWebContents(event.sender), {
+      type: 'question',
+      title: 'multiemu',
+      message: title,
+      detail: message,
+      buttons,
+      cancelId: buttons.length - 1,
+      noLink: true,
+    });
+    return response;
   });
 
   ipcMain.handle('hub:save-download', async (event, { id, savePath }) => {

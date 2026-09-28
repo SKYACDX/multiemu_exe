@@ -145,15 +145,19 @@ function toast(text) {
   }, 2000);
 }
 
-// Save state on F5, restore on F8 -- shortcuts for what the pause menu also
-// offers, kept out of the bindings because they are the emulator's own
-// controls, not the console's.
-function saveOrLoadState(saving) {
-  if (!(saving ? emu.saveState() : emu.loadState())) {
-    toast(saving ? 'Este núcleo no guarda estados' : 'No hay ningún estado guardado');
+// Slot 3 is the automatic one -- see autosave in preload.js.
+const AUTO_STATE_SLOT = 3;
+const stateSlotName = (slot) => (slot === AUTO_STATE_SLOT ? 'Estado automático' : `Slot ${slot + 1}`);
+
+// Save state on F5, restore on F8 (both slot 1) -- shortcuts for what the
+// pause menu also offers, kept out of the bindings because they are the
+// emulator's own controls, not the console's.
+function saveOrLoadState(saving, slot = 0) {
+  if (!(saving ? emu.saveState(slot) : emu.loadState(slot))) {
+    toast(saving ? 'Este núcleo no guarda estados' : 'Ese slot está vacío');
     return false;
   }
-  toast(saving ? 'Estado guardado' : 'Estado cargado');
+  toast(`${stateSlotName(slot)} ${saving ? 'guardado' : 'cargado'}`);
   return true;
 }
 
@@ -332,6 +336,7 @@ function playRom(romPath, partnerRom) {
   due = 0;
   loop(++loopToken);
   if (linked) toast('Controlas al jugador 1 · Tab cambia de jugador');
+  startCloudSync();
 }
 
 // Without this there is no way out of a game short of closing the window --
@@ -382,22 +387,49 @@ window.addEventListener('keydown', (event) => {
   }
 });
 
+// One row of the pause menu's states, laid out like Android's save panel:
+// three slots saved by hand, then the automatic one, which can only be
+// loaded. Signed in, a slot can also go up to the cloud; bringing one down
+// is in the account panel's list.
+function stateSlotRow(slot, savedAt) {
+  const auto = slot === AUTO_STATE_SLOT;
+  const row = element('div', undefined, 'row');
+  const label = element('span', `${auto ? 'Automático' : stateSlotName(slot)} · ${
+    savedAt ? new Date(savedAt).toLocaleString() : 'vacío'}`);
+  label.style.flex = '1';
+  row.append(label);
+
+  const button = (text, onClick, disabled = false) => {
+    const node = element('button', text);
+    node.disabled = disabled;
+    node.addEventListener('click', onClick);
+    row.append(node);
+  };
+  if (!auto) {
+    button(slot === 0 ? 'Guardar (F5)' : 'Guardar', () => {
+      if (saveOrLoadState(true, slot)) refreshPauseMenu();
+    });
+  }
+  button(slot === 0 ? 'Cargar (F8)' : 'Cargar', () => {
+    if (saveOrLoadState(false, slot)) resumeGame();
+  }, !savedAt);
+  if (!auto && signedIn) button('Subir', () => uploadState(slot), !savedAt);
+  if (!auto) {
+    button('Borrar', () => {
+      if (!confirm(`¿Borrar el contenido del slot ${slot + 1}?`)) return;
+      emu.deleteState(slot);
+      refreshPauseMenu();
+    }, !savedAt);
+  }
+  return row;
+}
+
 function refreshPauseMenu() {
   const info = emu.stateInfo();
-  document.getElementById('state-info').textContent = !info.supported
-    ? 'Este núcleo todavía no guarda estados.'
-    : info.savedAt
-      ? `Guardado el ${new Date(info.savedAt).toLocaleString()}`
-      : 'Todavía no has guardado ninguno.';
-
-  document.getElementById('save-state').disabled = !info.supported;
-  document.getElementById('load-state').disabled = !info.supported || !info.savedAt;
-  // Written on its own every 45s and on closing, for when the emulator
-  // closes before anyone saved -- see autosave in preload.js.
-  document.getElementById('auto-state-info').textContent = info.supported
-    ? `Automático: ${info.autoSavedAt ? new Date(info.autoSavedAt).toLocaleString() : 'vacío'}`
-    : '';
-  document.getElementById('load-auto-state').disabled = !info.autoSavedAt;
+  document.getElementById('state-info').hidden = info.supported;
+  document.getElementById('state-slots').replaceChildren(
+    ...(info.supported ? info.slots.map((savedAt, index) => stateSlotRow(index === 3 ? AUTO_STATE_SLOT : index, savedAt)) : []),
+  );
   document.getElementById('speed').value = String(speed);
   document.getElementById('speed-note').hidden = speed === 1;
   document.getElementById('fps').textContent = measuredFps
@@ -408,19 +440,6 @@ function refreshPauseMenu() {
 document.getElementById('resume').addEventListener('click', resumeGame);
 document.getElementById('quit').addEventListener('click', stopGame);
 
-document.getElementById('save-state').addEventListener('click', () => {
-  if (saveOrLoadState(true)) refreshPauseMenu();
-});
-
-document.getElementById('load-state').addEventListener('click', () => {
-  if (saveOrLoadState(false)) resumeGame();
-});
-
-document.getElementById('load-auto-state').addEventListener('click', () => {
-  if (!emu.loadState(true)) return toast('No se pudo cargar el estado automático');
-  toast('Estado automático cargado');
-  resumeGame();
-});
 
 document.getElementById('speed').addEventListener('change', (event) => {
   setSpeed(Number(event.target.value));

@@ -187,12 +187,21 @@ function writeState(target) {
 // write its title screen over the state it was meant to recover.
 const AUTOSAVE_INTERVAL_MS = 45_000;
 let ranSinceAutosave = false;
-const autoStatePath = () => statePath && statePath.replace(/\.state$/, '.auto.state');
+
+// Android's four slots: 0-2 saved by hand, 3 the automatic one -- the same
+// numbers the cloud uses for states. Slot 0 keeps the plain .state name
+// every state had before there were slots, so those still load.
+const AUTO_SLOT = 3;
+function stateFile(slot) {
+  if (!statePath) return null;
+  if (slot === AUTO_SLOT) return statePath.replace(/\.state$/, '.auto.state');
+  return slot ? statePath.replace(/\.state$/, `.${slot + 1}.state`) : statePath;
+}
 
 function autosave() {
   if (!core || !core.saveState || !statePath || !ranSinceAutosave) return;
   try {
-    writeState(autoStatePath());
+    writeState(stateFile(AUTO_SLOT));
     ranSinceAutosave = false;
   } catch {
     // Best effort, like Android's: nobody asked for this one.
@@ -228,6 +237,9 @@ contextBridge.exposeInMainWorld('hub', {
   gameKey: (romPath) => ipcRenderer.invoke('hub:game-key', romPath),
   uploadSave: (params) => ipcRenderer.invoke('hub:save-upload', params),
   downloadSave: (params) => ipcRenderer.invoke('hub:save-download', params),
+  saveStatus: (params) => ipcRenderer.invoke('hub:save-status', params),
+  syncSave: (params) => ipcRenderer.invoke('hub:save-sync', params),
+  ask: (question) => ipcRenderer.invoke('hub:ask', question),
 });
 
 contextBridge.exposeInMainWorld('settings', {
@@ -253,26 +265,28 @@ contextBridge.exposeInMainWorld('emu', {
     if (ordinal !== undefined) core.setButton(ordinal, pressed);
   },
   readAudio: (frames) => (core.readAudio ? core.readAudio(frames) : new Int16Array(0)),
-  // ponytail: one state per game, not numbered slots. The Android app has
-  // slots; add them here when someone actually wants a second one.
-  saveState: () => {
+  saveState: (slot = 0) => {
     if (!core.saveState || !statePath) return false;
-    writeState(statePath);
+    writeState(stateFile(slot));
     return true;
   },
-  // What the pause menu shows about the saved states: whether this core can
-  // take one at all, and when the manual and the automatic one were written.
-  stateInfo: () => {
-    const supported = Boolean(core && core.saveState && statePath);
-    const savedAt = (file) =>
-      supported && fs.existsSync(file) ? fs.statSync(file).mtime.toISOString() : null;
-    return { supported, savedAt: savedAt(statePath), autoSavedAt: savedAt(autoStatePath()) };
-  },
-  // auto picks the automatic state over the one saved by hand.
-  loadState: (auto) => {
-    const file = auto ? autoStatePath() : statePath;
+  loadState: (slot = 0) => {
+    const file = stateFile(slot);
     if (!core.loadState || !file || !fs.existsSync(file)) return false;
     return core.loadState(new Uint8Array(fs.readFileSync(file)));
+  },
+  deleteState: (slot) => fs.rmSync(stateFile(slot), { force: true }),
+  // Where a slot lives on disk, for the cloud to upload from and download to.
+  stateFile,
+  // What the pause menu shows: whether this core can take a state at all,
+  // and when each of the four slots was written (null when empty).
+  stateInfo: () => {
+    const supported = Boolean(core && core.saveState && statePath);
+    const slots = [0, 1, 2, AUTO_SLOT].map((slot) => {
+      const file = stateFile(slot);
+      return supported && fs.existsSync(file) ? fs.statSync(file).mtime.toISOString() : null;
+    });
+    return { supported, slots };
   },
   // Link cable only: which console the keyboard, pad and speakers belong
   // to, and holding both consoles still while the pause menu is open --

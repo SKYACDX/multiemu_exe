@@ -83,6 +83,7 @@
   }
 
   .row { display: flex; gap: 8px; align-items: center; }
+  #state-slots { display: flex; flex-direction: column; gap: 6px; }
   .row > input[type="search"],
   .row > input[type="email"],
   .row > input[type="password"],
@@ -225,16 +226,9 @@
   <p id="fps" class="muted"></p>
   <p id="speed-note" class="muted">El sonido se acelera con el juego, así que sube o baja de tono.</p>
 
-  <h1 style="font-size: 16px">Estado guardado</h1>
-  <p id="state-info" class="muted"></p>
-  <div class="row">
-    <button id="save-state">Guardar estado (F5)</button>
-    <button id="load-state">Cargar estado (F8)</button>
-  </div>
-  <p id="auto-state-info" class="muted"></p>
-  <div class="row">
-    <button id="load-auto-state">Cargar el automático</button>
-  </div>
+  <h1 style="font-size: 16px">Estados guardados</h1>
+  <p id="state-info" class="muted">Este núcleo todavía no guarda estados.</p>
+  <div id="state-slots"></div>
 
   <h1 style="font-size: 16px">Guardado de partida</h1>
   <div class="row">
@@ -296,7 +290,6 @@
     </div>
     <div class="row" style="margin-top: 10px">
       <button id="upload-save">Subir la partida</button>
-      <button id="upload-state">Subir el estado</button>
     </div>
     <ul class="saves" id="cloud-saves" style="margin-top: 10px"></ul>
   </div>
