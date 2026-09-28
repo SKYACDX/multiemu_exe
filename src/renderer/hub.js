@@ -306,7 +306,22 @@ function saveRow(save) {
     bringGameSave(save);
   });
 
-  row.append(title, download);
+  // Only the cloud's copy goes: the one on this PC is untouched.
+  const remove = element('button', 'Borrar');
+  remove.addEventListener('click', async () => {
+    if (!confirm(`¿Borrar "${slotLabel(save.slot)}" de la nube? Se borra para todos tus dispositivos; la copia de este PC se queda.`)) return;
+    remove.disabled = true;
+    try {
+      await hub.deleteSave(save.id);
+      toast('Borrado de la nube');
+      loadCloudSaves();
+    } catch (error) {
+      toast(ipcErrorMessage(error));
+      remove.disabled = false;
+    }
+  });
+
+  row.append(title, download, remove);
   return row;
 }
 
@@ -496,17 +511,29 @@ function showGameSaveRow() {
   box.replaceChildren(row);
 }
 
-// ---- Cover art ----------------------------------------------------------
+// ---- The picture behind the game ---------------------------------------
 //
-// Android's themed background: the game's cover, blurred, behind the
-// picture (findCoverArt). Nothing found leaves the background plain.
+// Blurred behind the game, and taken from the game itself rather than
+// looked up (see "Pictures taken from the games themselves" in src/hub.js):
+// a DS game's own icon, or for a Game Boy or GBA game, which carries no
+// picture, its live screen -- copied onto the ambient canvas a few times a
+// second by drawAmbient.
 let coverToken = 0;
+const ambient = document.getElementById('ambient');
+const ambientContext = ambient.getContext('2d');
+let ambientFrames = 0;
 
 async function showCover(rom) {
   const token = ++coverToken;
   const cover = document.getElementById('cover');
   cover.hidden = true;
+  ambient.hidden = true;
   if (!rom) return;
+  if (!/\.nds$/i.test(rom)) {
+    ambientFrames = 0;
+    ambient.hidden = false;
+    return;
+  }
   let dataUrl = null;
   try {
     dataUrl = await hub.romCover(rom);
@@ -517,6 +544,28 @@ async function showCover(rom) {
   if (token !== coverToken || !dataUrl) return;
   cover.style.backgroundImage = `url("${dataUrl}")`;
   cover.hidden = false;
+}
+
+// Called with every frame drawn. One in six is plenty for a picture this
+// blurred, and keeps the copy off the emulation's back.
+function drawAmbient() {
+  if (ambient.hidden || ambientFrames++ % 6) return;
+  if (ambient.width !== canvas.width || ambient.height !== canvas.height) {
+    ambient.width = canvas.width;
+    ambient.height = canvas.height;
+  }
+  ambientContext.drawImage(canvas, 0, 0);
+}
+
+// The screen a Game Boy or GBA game is left on becomes its picture in the
+// recents and the ROM folder. A DS game has its icon instead.
+function keepLastScreen(rom) {
+  if (!rom || /\.nds$/i.test(rom)) return;
+  try {
+    emu.saveScreen(rom, canvas.toDataURL('image/png'));
+  } catch {
+    // A missing picture is not worth interrupting anything for.
+  }
 }
 
 // ---- Feedback -----------------------------------------------------------
@@ -607,6 +656,14 @@ let syncChecking = null;
 // opened again, when the question comes back.
 let syncPutOff = false;
 
+// The game open, if it is one Android syncs: GBA and DS only (its
+// autoSyncGameSave and checkGameSaveConflict skip the Game Boy). A Game Boy
+// save can still go up by hand, with the Subir buttons.
+function syncedRom() {
+  const rom = loadedRom();
+  return rom && /\.(gba|nds)$/i.test(rom) ? rom : null;
+}
+
 function startCloudSync() {
   syncedCrc = null;
   syncChecked = false;
@@ -628,7 +685,7 @@ function checkCloudSave() {
 }
 
 async function compareWithCloud() {
-  const rom = loadedRom();
+  const rom = syncedRom();
   if (!rom) return;
   const savePath = batterySavePath(rom);
   let status;
@@ -694,7 +751,7 @@ async function compareWithCloud() {
 }
 
 async function syncCloudSave() {
-  const rom = loadedRom();
+  const rom = syncedRom();
   if (!rom || !signedIn || syncPutOff) return;
   // Signed in after the game opened: settle the comparison first.
   if (!syncChecked) return checkCloudSave();

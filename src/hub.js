@@ -95,23 +95,25 @@ function gameKey(romPath) {
   return shared.cloudGameKey(system, new Uint8Array(fs.readFileSync(romPath)));
 }
 
-const COVER_RETRY_MS = 7 * 24 * 60 * 60 * 1000;
+// ---- Pictures taken from the games themselves ----------------------------
+//
+// What the menu and the background behind the game show, taken from the
+// game rather than looked up anywhere: a DS ROM carries its own icon, the
+// one the console's menu shows, and that is drawn out of it. A Game Boy or
+// GBA ROM carries no picture at all, so its picture is its own screen --
+// the last one seen when the game was left (saved by the preload's
+// saveScreen), and the live one behind it while it runs (the renderer's
+// ambient canvas).
 
-// The start of a ROM, enough for readRomTitle, and which system it is for.
-// Out of a .zip too, without unpacking it: a DS image in there runs to
-// 512MB and only the first 0x200 bytes matter. Walks the zip's local file
-// headers to the first ROM, then inflates just the first stretch of it --
-// Z_SYNC_FLUSH makes zlib hand back what a cut-off stream decodes to
-// instead of failing. Null if there is no ROM to be found that way.
-function romHeader(romPath) {
+// The ROM inside a file: the file itself, or the first ROM in a .zip.
+// { extension, zipped, dataStart, stored }, or null for a zip holding no
+// ROM this walk can find -- it follows the local file headers, which stops
+// at an entry whose size comes after its data (flag bit 3).
+function romEntry(romPath) {
   const extension = path.extname(romPath).slice(1).toLowerCase();
+  if (extension !== 'zip') return { extension, zipped: false };
   const file = fs.openSync(romPath, 'r');
   try {
-    if (extension !== 'zip') {
-      const header = Buffer.alloc(0x200);
-      fs.readSync(file, header, 0, header.length, 0);
-      return { extension, header };
-    }
     let offset = 0;
     for (let entry = 0; entry < 16; entry++) {
       const local = Buffer.alloc(30);
@@ -122,15 +124,8 @@ function romHeader(romPath) {
       const dataStart = offset + 30 + nameLength + local.readUInt16LE(28);
       const inner = path.extname(name.toString()).slice(1).toLowerCase();
       if (ROM_EXTENSIONS.includes(inner)) {
-        const chunk = Buffer.alloc(64 * 1024);
-        const read = fs.readSync(file, chunk, 0, chunk.length, dataStart);
-        const stored = local.readUInt16LE(8) === 0;
-        const header = stored
-          ? chunk.subarray(0, read)
-          : zlib.inflateRawSync(chunk.subarray(0, read), { finishFlush: zlib.constants.Z_SYNC_FLUSH });
-        return { extension: inner, header: header.subarray(0, 0x200) };
+        return { extension: inner, zipped: true, dataStart, stored: local.readUInt16LE(8) === 0 };
       }
-      // Bit 3: the size comes after the data, so the next entry can't be found.
       if (local.readUInt16LE(6) & 8) return null;
       offset = dataStart + local.readUInt32LE(18);
     }
@@ -139,6 +134,106 @@ function romHeader(romPath) {
     fs.closeSync(file);
   }
 }
+
+// length bytes of the ROM from offset on. Inside a zip the entry is
+// inflated as a stream and dropped the moment the range is covered, so a
+// 512MB DS image is never unpacked to read a few KB near its start.
+function readRomRange(romPath, entry, offset, length) {
+  if (!entry.zipped) {
+    const bytes = Buffer.alloc(length);
+    const file = fs.openSync(romPath, 'r');
+    try {
+      fs.readSync(file, bytes, 0, length, offset);
+    } finally {
+      fs.closeSync(file);
+    }
+    return Promise.resolve(bytes);
+  }
+  return new Promise((resolve, reject) => {
+    const input = fs.createReadStream(romPath, { start: entry.dataStart });
+    const source = entry.stored ? input : input.pipe(zlib.createInflateRaw());
+    const end = offset + length;
+    const parts = [];
+    let seen = 0;
+    const finish = () => {
+      input.destroy();
+      source.destroy();
+      resolve(Buffer.concat(parts));
+    };
+    source.on('data', (chunk) => {
+      const from = Math.max(0, offset - seen);
+      const to = Math.min(chunk.length, end - seen);
+      if (to > from) parts.push(chunk.subarray(from, to));
+      seen += chunk.length;
+      if (seen >= end) finish();
+    });
+    source.on('end', finish);
+    source.on('error', reject);
+    input.on('error', reject);
+  });
+}
+
+// A minimal PNG of an RGBA image: one IHDR, one IDAT, no filtering.
+function encodePng(width, height, rgba) {
+  const chunk = (type, data) => {
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type), data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(zlib.crc32(body));
+    return Buffer.concat([length, body, crc]);
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header[8] = 8; // bits per channel
+  header[9] = 6; // RGBA
+  const rows = Buffer.alloc((width * 4 + 1) * height);
+  for (let y = 0; y < height; y++) {
+    rgba.copy(rows, y * (width * 4 + 1) + 1, y * width * 4, (y + 1) * width * 4);
+  }
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', header),
+    chunk('IDAT', zlib.deflateSync(rows)),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+// A DS ROM's icon as PNG bytes, or null. The banner's offset is in the
+// header at 0x68; in the banner, the 32x32 icon is 4x4 tiles of 8x8 at
+// 4 bits a pixel from 0x20, and its 16-colour BGR555 palette follows at
+// 0x220, colour 0 being transparent (GBATEK, "DS Cartridge Icon/Title").
+async function dsIcon(romPath, entry) {
+  const header = await readRomRange(romPath, entry, 0, 0x200);
+  const banner = header.readUInt32LE(0x68);
+  if (!banner) return null;
+  const data = await readRomRange(romPath, entry, banner + 0x20, 0x220);
+  if (data.length < 0x220) return null;
+  const rgba = Buffer.alloc(32 * 32 * 4);
+  const expand = (c) => (c << 3) | (c >> 2);
+  for (let tile = 0; tile < 16; tile++) {
+    for (let y = 0; y < 8; y++) {
+      for (let x = 0; x < 8; x++) {
+        const byte = data[tile * 32 + y * 4 + (x >> 1)];
+        const index = x & 1 ? byte >> 4 : byte & 0x0f;
+        const color = data.readUInt16LE(0x200 + index * 2);
+        const at = (((tile >> 2) * 8 + y) * 32 + (tile & 3) * 8 + x) * 4;
+        rgba[at] = expand(color & 0x1f);
+        rgba[at + 1] = expand((color >> 5) & 0x1f);
+        rgba[at + 2] = expand((color >> 10) & 0x1f);
+        rgba[at + 3] = index ? 0xff : 0;
+      }
+    }
+  }
+  return encodePng(32, 32, rgba);
+}
+
+// Keyed by the ROM's path: the same game opened from the same place.
+const pictureKey = (romPath) => crypto.createHash('sha1').update(romPath.toLowerCase()).digest('hex');
+// A .zip is played through the ROM it unpacks to (hub:unpack-rom), so its
+// last screen is filed under that one; this remembers which it was.
+const unpackedFrom = (zipPath) => userFile('covers', `${pictureKey(zipPath)}.link`);
 
 // Where a downloaded or unpacked ROM lands, and its save next to it. The
 // same game opened again finds its own file, untouched. A different dump
@@ -213,40 +308,40 @@ function register() {
   }
   ipcMain.handle('hub:cover', (event, url) => coverDataUrl(url));
 
-  // The cover of a ROM file, as a data: URL, or null -- for the background
-  // behind the game, and the recents and ROM folder lists. Android's
-  // findCoverArt: the title in the ROM's own header, searched in the
-  // catalogue. Kept on disk once found, since the menu asks for up to forty
-  // at every start; a ROM with none is asked about again after a week, in
-  // case the catalogue has one by then.
+  // A ROM file's picture as a data: URL, or null -- for the recents and ROM
+  // folder lists, and a DS game's background. See "Pictures taken from the
+  // games themselves" above: the DS icon (kept once drawn, since the menu
+  // asks for up to forty at every start), or the last screen of a Game Boy
+  // or GBA game, which is null until the game has been played once.
   ipcMain.handle('hub:rom-cover', async (event, romPath) => {
-    const key = crypto.createHash('sha1').update(romPath.toLowerCase()).digest('hex');
-    const found = userFile('covers', `${key}.txt`);
-    const missing = userFile('covers', `${key}.none`);
-    if (fs.existsSync(found)) return fs.readFileSync(found, 'utf8');
-    if (fs.existsSync(missing) && Date.now() - fs.statSync(missing).mtimeMs < COVER_RETRY_MS) return null;
-
-    // findCoverArt's own search, spelled out: it swallows a failed request,
-    // and offline must not be remembered as "has no cover".
-    let url = null;
+    let entry;
     try {
-      const rom = romHeader(romPath);
-      const title = rom && shared.readRomTitle(new Uint8Array(rom.header), rom.extension);
-      if (title) {
-        const platform = SYSTEM_BY_EXTENSION[rom.extension] || 'gb';
-        const { files } = await shared.listFiles({ platform, q: title, limit: 5 });
-        url = files.find((file) => file.coverImageUrl)?.coverImageUrl ?? null;
-      }
+      entry = romEntry(romPath);
     } catch {
-      return null; // offline, or unreadable: tried again next time
+      return null; // gone, or unreadable
     }
-    if (!url) {
-      fs.writeFileSync(missing, '');
-      return null;
+    if (!entry) return null;
+
+    if (entry.extension === 'nds') {
+      const icon = userFile('covers', `${pictureKey(romPath)}-icon.png`);
+      if (!fs.existsSync(icon)) {
+        let png = null;
+        try {
+          png = await dsIcon(romPath, entry);
+        } catch {
+          return null;
+        }
+        if (!png) return null;
+        fs.writeFileSync(icon, png);
+      }
+      return `data:image/png;base64,${fs.readFileSync(icon).toString('base64')}`;
     }
-    const dataUrl = await coverDataUrl(url);
-    if (dataUrl) fs.writeFileSync(found, dataUrl);
-    return dataUrl;
+
+    const link = unpackedFrom(romPath);
+    const played = entry.zipped && fs.existsSync(link) ? fs.readFileSync(link, 'utf8') : romPath;
+    const screen = userFile('covers', `${pictureKey(played)}-screen.png`);
+    if (!fs.existsSync(screen)) return null;
+    return `data:image/png;base64,${fs.readFileSync(screen).toString('base64')}`;
   });
   ipcMain.handle('hub:platforms', () => shared.listPlatforms());
 
@@ -280,7 +375,9 @@ function register() {
     if (!unpacked) {
       throw new Error(`"${path.basename(filePath)}" no contiene ninguna ROM que este emulador pueda abrir`);
     }
-    return keepRom(unpacked.name, unpacked.bytes);
+    const romPath = keepRom(unpacked.name, unpacked.bytes);
+    fs.writeFileSync(unpackedFrom(filePath), romPath);
+    return romPath;
   });
 
   // A newer release for THIS platform, or null.
@@ -480,6 +577,9 @@ function register() {
     fs.writeFileSync(savePath, bytes);
     return savePath;
   });
+
+  // Gone from the cloud for every device; the copy on this PC stays.
+  ipcMain.handle('hub:save-delete', (event, id) => shared.deleteCloudSave(requireToken(), id));
 }
 
 module.exports = { register, VERSION_CODE };

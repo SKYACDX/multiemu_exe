@@ -28,6 +28,30 @@ constexpr uint8_t kPalette[4][4] = {
     {0x00, 0x00, 0x00, 0xFF},
 };
 
+constexpr std::size_t kScreenPixels = static_cast<std::size_t>(gb::kScreenWidth) * gb::kScreenHeight;
+
+// The picture as RGBA. A Game Boy Color game comes out of the core as
+// RGB555, widened to 8 bits a channel the way the Android bridge does it
+// (gameboy_jni.cpp): the top bits repeated into the low ones, so 31 is 255
+// rather than 248. Anything else is the four shades above.
+void writeRgba(const gb::GameBoy& gameBoy, uint8_t* pixels) {
+    if (gameBoy.isColor()) {
+        auto expand = [](unsigned c) { return static_cast<uint8_t>((c << 3) | (c >> 2)); };
+        const auto& color = gameBoy.colorFramebuffer();
+        for (std::size_t i = 0; i < color.size(); i++) {
+            pixels[i * 4 + 0] = expand(color[i] & 0x1F);
+            pixels[i * 4 + 1] = expand((color[i] >> 5) & 0x1F);
+            pixels[i * 4 + 2] = expand((color[i] >> 10) & 0x1F);
+            pixels[i * 4 + 3] = 0xFF;
+        }
+        return;
+    }
+    const auto& framebuffer = gameBoy.framebuffer();
+    for (std::size_t i = 0; i < framebuffer.size(); i++) {
+        std::copy(kPalette[framebuffer[i] & 0x03], kPalette[framebuffer[i] & 0x03] + 4, pixels + i * 4);
+    }
+}
+
 class GameBoy : public Napi::ObjectWrap<GameBoy> {
    public:
     static Napi::Function define(Napi::Env env) {
@@ -81,17 +105,8 @@ class GameBoy : public Napi::ObjectWrap<GameBoy> {
     // than reusing one buffer: contextBridge copies whatever crosses into
     // the renderer anyway, so a reused buffer would save nothing.
     Napi::Value frame(const Napi::CallbackInfo& info) {
-        const auto& framebuffer = gameBoy_->framebuffer();
-        auto out = Napi::Uint8Array::New(info.Env(), framebuffer.size() * 4);
-
-        uint8_t* pixels = out.Data();
-        for (std::size_t i = 0; i < framebuffer.size(); i++) {
-            const uint8_t* shade = kPalette[framebuffer[i] & 0x03];
-            pixels[i * 4 + 0] = shade[0];
-            pixels[i * 4 + 1] = shade[1];
-            pixels[i * 4 + 2] = shade[2];
-            pixels[i * 4 + 3] = shade[3];
-        }
+        auto out = Napi::Uint8Array::New(info.Env(), kScreenPixels * 4);
+        writeRgba(*gameBoy_, out.Data());
         return out;
     }
 
@@ -238,9 +253,13 @@ class GbLink : public Napi::ObjectWrap<GbLink> {
         bool done[2] = {false, false};
         while (!done[0] || !done[1]) {
             const int i = cycles_[0] <= cycles_[1] ? 0 : 1;
-            cycles_[i] += consoles_[i]->step() * 4;
+            // Real time, not CPU cycles: a Game Boy Color in double speed
+            // gets through two cycles in the time of one, and counting them
+            // as whole ones would leave it running at half the other's pace.
+            const int tCycles = consoles_[i]->step() * 4;
+            cycles_[i] += consoles_[i]->bus().doubleSpeed() ? tCycles / 2 : tCycles;
             if (consoles_[i]->frameReady()) {
-                pictures_[i] = consoles_[i]->framebuffer();
+                writeRgba(*consoles_[i], pictures_[i].data());
                 done[i] = true;
             }
         }
@@ -250,15 +269,9 @@ class GbLink : public Napi::ObjectWrap<GbLink> {
     // side by side.
     Napi::Value frame(const Napi::CallbackInfo& info) {
         if (!ready(info.Env())) return info.Env().Undefined();
-        const std::size_t pixelsPerScreen = pictures_[0].size();
-        auto out = Napi::Uint8Array::New(info.Env(), pixelsPerScreen * 2 * 4);
-        uint8_t* pixels = out.Data();
-        for (int i = 0; i < 2; i++) {
-            for (std::size_t j = 0; j < pixelsPerScreen; j++) {
-                const uint8_t* shade = kPalette[pictures_[i][j] & 0x03];
-                std::copy(shade, shade + 4, pixels + (i * pixelsPerScreen + j) * 4);
-            }
-        }
+        auto out = Napi::Uint8Array::New(info.Env(), kScreenPixels * 2 * 4);
+        std::copy(pictures_[0].begin(), pictures_[0].end(), out.Data());
+        std::copy(pictures_[1].begin(), pictures_[1].end(), out.Data() + kScreenPixels * 4);
         return out;
     }
 
@@ -330,9 +343,11 @@ class GbLink : public Napi::ObjectWrap<GbLink> {
     }
 
     std::unique_ptr<gb::GameBoy> consoles_[2];
-    // T-cycles each console has run, which decides who steps next.
+    // Normal-speed t-cycles of time each console has run, which decides who
+    // steps next.
     long long cycles_[2] = {0, 0};
-    gb::Ppu::Framebuffer pictures_[2] = {};
+    // Each console's last finished picture, already RGBA.
+    std::array<uint8_t, kScreenPixels * 4> pictures_[2] = {};
     int player_ = 0;
 };
 

@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { contextBridge, ipcRenderer } = require('electron');
@@ -237,6 +238,7 @@ contextBridge.exposeInMainWorld('hub', {
   gameKey: (romPath) => ipcRenderer.invoke('hub:game-key', romPath),
   uploadSave: (params) => ipcRenderer.invoke('hub:save-upload', params),
   downloadSave: (params) => ipcRenderer.invoke('hub:save-download', params),
+  deleteSave: (id) => ipcRenderer.invoke('hub:save-delete', id),
   saveStatus: (params) => ipcRenderer.invoke('hub:save-status', params),
   unpackRom: (filePath) => ipcRenderer.invoke('hub:unpack-rom', filePath),
   romCover: (romPath) => ipcRenderer.invoke('hub:rom-cover', romPath),
@@ -269,6 +271,18 @@ contextBridge.exposeInMainWorld('emu', {
       files.push({ path: file, name: entry.name, size: fs.statSync(file).size });
     }
     return files.sort((a, b) => a.name.localeCompare(b.name));
+  },
+  // The last screen of a Game Boy or GBA game, as a PNG data: URL, which is
+  // its picture in the menu -- those ROMs carry none of their own. Written
+  // here, synchronously, because it is also called while the window
+  // closes, when an IPC round trip would never finish. Named as
+  // hub:rom-cover in src/hub.js reads it back.
+  saveScreen: (romPath, dataUrl) => {
+    if (!userDataDir) return;
+    const key = crypto.createHash('sha1').update(romPath.toLowerCase()).digest('hex');
+    const folder = path.join(userDataDir, 'covers');
+    fs.mkdirSync(folder, { recursive: true });
+    fs.writeFileSync(path.join(folder, `${key}-screen.png`), Buffer.from(dataUrl.split(',')[1], 'base64'));
   },
   // Size in bytes, or null for a file that is no longer there.
   fileSize: (file) => (fs.existsSync(file) ? fs.statSync(file).size : null),

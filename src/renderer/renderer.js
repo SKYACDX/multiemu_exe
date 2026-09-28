@@ -72,6 +72,7 @@ function draw() {
     ctx.putImageData(layout.top, 0, 0);
   }
   presentFrame();
+  drawAmbient();
 }
 
 // ponytail: setTimeout pacing, so ~1ms of jitter per frame. The audio queue
@@ -350,6 +351,7 @@ function playRom(romPath, partnerRom) {
 // asks the user to reopen the game afterwards.
 function stopGame() {
   if (!currentRom) return;
+  keepLastScreen(loadedRom());
   loopToken++;  // any pending timer now belongs to a dead game
   paused = false;
   currentRom = null;
@@ -359,8 +361,12 @@ function stopGame() {
   canvas.hidden = true;
   showCover(null);
   presentFrame();
+  showRecents(); // with the screen just kept
   show('picker');
 }
+
+// Closing the window mid-game keeps the last screen too.
+window.addEventListener('beforeunload', () => keepLastScreen(loadedRom()));
 
 function pauseGame() {
   if (!currentRom || paused) return;

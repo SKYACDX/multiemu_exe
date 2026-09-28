@@ -89,17 +89,21 @@
   .row.slot { flex-wrap: wrap; }
   .row.slot button { padding: 6px 12px; }
 
-  /* The game's cover behind the picture (showCover in hub.js), blurred and
-     darkened the way Android's themed background is, so it frames the game
-     rather than competing with it. Slightly oversized, or the blur leaves
-     a pale rim at the window's edges. */
-  #cover {
+  /* The picture behind the game (showCover in hub.js): a DS game's icon, or
+     a Game Boy/GBA game's own live screen on the ambient canvas. Blurred
+     and darkened the way Android's themed background is, so it frames the
+     game rather than competing with it. Slightly oversized, or the blur
+     leaves a pale rim at the window's edges. */
+  #cover, #ambient {
     position: fixed;
-    inset: -24px;
-    background-size: cover;
-    background-position: center;
-    filter: blur(12px) brightness(0.45);
+    top: -24px;
+    left: -24px;
+    width: calc(100% + 48px);
+    height: calc(100% + 48px);
+    filter: blur(16px) brightness(0.45);
   }
+  #cover { background-size: cover; background-position: center; }
+  #ambient { object-fit: cover; }
 
   /* The main menu's recents: Android's two-column cards, a colour per
      system across the top. */
@@ -127,8 +131,10 @@
   .recent .remove { padding: 0 6px; background: none; border: none; color: #777; }
   .recent .remove:hover { color: #ddd; }
   /* The cover: grey until one turns up, if one does. */
-  .recent .cover { width: 100%; height: 110px; object-fit: cover; border-radius: 4px; background: #2a2a2a; }
-  #folder-files .cover { width: 40px; height: 40px; object-fit: cover; border-radius: 4px; background: #2a2a2a; flex: none; }
+  /* Pixel art -- a DS icon is 32x32, a screen 160x144 -- so scaled with
+     hard edges, and whole rather than cropped. */
+  .recent .cover { width: 100%; height: 110px; object-fit: contain; image-rendering: pixelated; border-radius: 4px; background: #2a2a2a; }
+  #folder-files .cover { width: 40px; height: 40px; object-fit: contain; image-rendering: pixelated; border-radius: 4px; background: #2a2a2a; flex: none; }
   #folder-shortcut { justify-content: flex-start; text-align: left; }
   h2 { font-size: 15px; font-weight: 600; margin: 4px 0 0; text-align: left; }
 
@@ -410,6 +416,7 @@
 </div>
 
 <div id="cover" hidden></div>
+<canvas id="ambient" hidden></canvas>
 <canvas id="screen" hidden></canvas>
 <canvas id="screen-gl" hidden></canvas>
 <div id="toast" hidden></div>
