@@ -1,0 +1,76 @@
+diff --git a/src/citra_libretro/citra_libretro.cpp b/src/citra_libretro/citra_libretro.cpp
+index 8a65f9d..05992dd 100644
+--- a/src/citra_libretro/citra_libretro.cpp
++++ b/src/citra_libretro/citra_libretro.cpp
+@@ -49,6 +49,9 @@
+ #include "core/hle/kernel/process.h"
+ #include "core/loader/loader.h"
+ #include "core/memory.h"
++#include "core/hle/service/cfg/cfg.h"
++#include "network/network.h"
++#include "network/verify_user.h"
+ 
+ #ifdef HAVE_LIBRETRO_VFS
+ #include <streams/file_stream_transforms.h>
+@@ -87,6 +90,12 @@ void retro_init() {
+         std::make_shared<Frontend::ImageInterface>());
+ 
+     LibRetro::Input::Init();
++
++    // The emulated local wireless (NWM_UDS) runs over Azahar's multiplayer
++    // rooms, and finds them through this. The other frontends call it at
++    // start-up; this one never did, so every game saw no network at all.
++    // multiemu patch.
++    Network::Init();
+ }
+ 
+ void retro_deinit() {
+@@ -95,6 +104,7 @@ void retro_deinit() {
+         Core::System::GetInstance().Shutdown();
+     }
+ 
++    Network::Shutdown();
+     LibRetro::Input::Shutdown();
+ 
+     delete emu_instance;
+@@ -750,3 +760,40 @@ size_t retro_get_memory_size(unsigned id) {
+ void retro_cheat_reset() {}
+ 
+ void retro_cheat_set(unsigned index, bool enabled, const char* code) {}
++
++// ---- multiemu patch: local wireless between two consoles -------------------
++//
++// Two 3DS consoles in one process, each a copy of this DLL with its own
++// globals. The first hosts a room on the loopback and joins it, the second
++// joins it too, and NWM_UDS -- the 3DS's local wireless -- carries their
++// packets through it. The same calls Azahar's Android frontend makes
++// (src/android/app/src/main/jni/multiplayer.cpp); a game must be loaded
++// first, since joining identifies the console by its ID.
++
++// Opens the room. False if it could not be bound (the port in use).
++extern "C" RETRO_API bool multiemu_room_host(unsigned port) {
++    auto room = Network::GetRoom().lock();
++    return room && room->Create("multiemu", "", "127.0.0.1", static_cast<u16>(port), "", 4, "", "",
++                                0, std::make_unique<Network::VerifyUser::NullBackend>(), {});
++}
++
++// Starts joining; the outcome shows up in multiemu_room_state.
++extern "C" RETRO_API void multiemu_room_join(unsigned port, const char* nickname) {
++    if (auto member = Network::GetRoomMember().lock()) {
++        member->Join(nickname, Service::CFG::GetConsoleIdHash(Core::System::GetInstance()),
++                     "127.0.0.1", static_cast<u16>(port), 0, Network::NoPreferredMac, "");
++    }
++}
++
++// Network::RoomMember::State: 3 is joined (4 the room's moderator), -1
++// before Network::Init.
++extern "C" RETRO_API int multiemu_room_state() {
++    auto member = Network::GetRoomMember().lock();
++    return member ? static_cast<int>(member->GetState()) : -1;
++}
++
++// How many consoles are in the room, as this one sees it.
++extern "C" RETRO_API int multiemu_room_members() {
++    auto member = Network::GetRoomMember().lock();
++    return member ? static_cast<int>(member->GetMemberInformation().size()) : 0;
++}

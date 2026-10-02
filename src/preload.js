@@ -149,6 +149,7 @@ function open(romPath) {
 }
 
 function systemOf(romPath) {
+  if (/\.(3ds|cci|cxi)$/i.test(romPath)) return '3ds';
   if (/\.nds$/i.test(romPath)) return 'nds';
   if (/\.gba$/i.test(romPath)) return 'gba';
   if (/\.gbc?$/i.test(romPath)) return 'gb';
@@ -162,8 +163,9 @@ function systemOf(romPath) {
 function openLink(romA, romB) {
   const system = systemOf(romA);
   if (!system || system !== systemOf(romB)) {
-    throw new Error('Los dos juegos tienen que ser de la misma consola: dos de DS, dos de GBA o dos de Game Boy.');
+    throw new Error('Los dos juegos tienen que ser de la misma consola: dos de 3DS, dos de DS, dos de GBA o dos de Game Boy.');
   }
+  if (system === '3ds') return open3dsLink(romA, romB);
   const saveA = romA.replace(/\.[^.]+$/, '.sav');
   const saveB = romB.replace(/\.[^.]+$/, '.sav');
   // Windows paths are case-insensitive, so compare them that way.
@@ -191,6 +193,31 @@ function openLink(romA, romB) {
   }
   statePath = null;
   return { width: core.width, height: core.height, screens: 2, audioSampleRate: core.audioSampleRate, system };
+}
+
+// Two 3DS consoles on local wireless (N3dsLink in n3ds_addon.cpp). Unlike
+// the other links, the same ROM is fine for both: a 3DS game saves into the
+// console, not beside the ROM, and each player is a console of their own --
+// player 1 the usual one, player 2 a second with its own NAND and SD card,
+// so its own saves.
+//
+// Each console is its own copy of the core, and Windows only loads a second
+// copy of a DLL from a second file, so player 2's runs from a copy kept in
+// its own folder, refreshed whenever the app ships a new core.
+function open3dsLink(romA, romB) {
+  const dataB = path.join(userDataDir, '3ds-2');
+  const coreB = path.join(dataB, 'azahar_libretro.dll');
+  fs.mkdirSync(dataB, { recursive: true });
+  const shipped = fs.statSync(AZAHAR_CORE);
+  const copied = fs.existsSync(coreB) && fs.statSync(coreB);
+  if (!copied || copied.size !== shipped.size || copied.mtimeMs < shipped.mtimeMs) {
+    fs.copyFileSync(AZAHAR_CORE, coreB);
+  }
+  batterySaves = [];
+  core = new n3ds.N3dsLink(AZAHAR_CORE, romA, path.join(userDataDir, '3ds'), coreB, romB, dataB);
+  buttons = N3DS_BUTTONS;
+  statePath = null;
+  return { width: core.width, height: core.height, screens: 2, audioSampleRate: core.audioSampleRate, system: '3ds' };
 }
 
 // Through a temp file: dying halfway through a write must not leave a

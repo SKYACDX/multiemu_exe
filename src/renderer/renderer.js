@@ -299,8 +299,8 @@ function playRom(romPath, partnerRom) {
   gbaCartName = null; // a new console has an empty slot-2
 
   const screenHeight = size.height / size.screens;
-  // Two whole DS consoles side by side, each with its own two screens.
-  const dsLink = linked && size.system === 'nds';
+  // Two whole DS or 3DS consoles side by side, each with its own two screens.
+  const dsLink = linked && (size.system === 'nds' || size.system === '3ds');
   const consoleScreenHeight = dsLink ? screenHeight / 2 : screenHeight;
   // Two players side by side whatever the DS setting says: stacked, each
   // would get half the height for no reason.
