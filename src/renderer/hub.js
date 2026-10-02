@@ -488,7 +488,9 @@ async function downloadState(slot) {
 
 function showGameSaveRow() {
   const box = document.getElementById('game-save');
-  box.hidden = !loadedRom();
+  // A 3DS game saves into the emulated console, not to a .sav beside the
+  // ROM, so there is no file for this row to move.
+  box.hidden = !loadedRom() || /\.(3ds|cci|cxi)$/i.test(loadedRom());
   if (!signedIn) {
     box.replaceChildren(element('p', 'Inicia sesión en Cuenta para sincronizar guardados en la nube.', 'muted'));
     return;

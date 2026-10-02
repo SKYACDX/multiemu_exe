@@ -141,3 +141,23 @@ target_link_libraries(ds_addon PRIVATE
 # __declspec(dllimport) and the link fails on __imp_slirp_*.
 target_compile_definitions(ds_addon PRIVATE
     NAPI_DISABLE_CPP_EXCEPTIONS NAPI_VERSION=8 NOMINMAX LIBSLIRP_STATIC_BUILD)
+
+# The 3DS: Azahar's own libretro core (azahar_libretro.dll), built out of
+# band by `npm run build:azahar` and loaded at run time rather than linked
+# -- see src/native/n3ds_addon.cpp. So this needs only libretro.h, plus the
+# DLL copied next to the addon, where the preload looks for it.
+set(AZAHAR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/azahar)
+set(AZAHAR_CORE ${AZAHAR}/build-win/bin/Release/azahar_libretro.dll)
+if(NOT EXISTS ${AZAHAR_CORE})
+    message(FATAL_ERROR "Azahar's libretro core not built: run `npm run build:azahar` first")
+endif()
+
+add_library(n3ds_addon SHARED src/native/n3ds_addon.cpp ${CMAKE_JS_SRC})
+set_target_properties(n3ds_addon PROPERTIES PREFIX "" SUFFIX ".node" CXX_STANDARD 20)
+target_include_directories(n3ds_addon PRIVATE
+    ${CMAKE_JS_INC} ${NODE_ADDON_API_DIR}
+    ${AZAHAR}/externals/libretro-common/libretro-common/include)
+target_link_libraries(n3ds_addon PRIVATE opengl32 user32 gdi32 ${CMAKE_JS_LIB})
+target_compile_definitions(n3ds_addon PRIVATE NAPI_DISABLE_CPP_EXCEPTIONS NAPI_VERSION=8 NOMINMAX)
+add_custom_command(TARGET n3ds_addon POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${AZAHAR_CORE} $<TARGET_FILE_DIR:n3ds_addon>)

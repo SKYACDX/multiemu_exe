@@ -12,6 +12,8 @@ files:
   - src/**/*
   - build/shared.js
   - build/Release/*.node
+  # Azahar's libretro core, which n3ds_addon.node loads at run time.
+  - build/Release/azahar_libretro.dll
   - package.json
 
 # Electron cannot dlopen a .node from inside an asar, so the addons are left
@@ -19,6 +21,7 @@ files:
 # automatically, so nothing in the code has to know.
 asarUnpack:
   - '**/*.node'
+  - '**/*.dll'
 
 # The addons are built by cmake-js against Electron's own ABI (see the build
 # script), not by npm, so there is nothing for electron-builder to rebuild --

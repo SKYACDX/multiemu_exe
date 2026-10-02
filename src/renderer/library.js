@@ -10,9 +10,11 @@
 // Android's MAX_CACHE_ENTRIES (RomLibraryModule.kt).
 const RECENTS_LIMIT = 40;
 
-const SYSTEM_LABELS = { gb: 'GB', gbc: 'GBC', gba: 'GBA', nds: 'NDS' };
+const SYSTEM_LABELS = { gb: 'GB', gbc: 'GBC', gba: 'GBA', nds: 'NDS', '3ds': '3DS', cci: '3DS', cxi: '3DS' };
 // Android's badge colours, per system.
-const SYSTEM_COLORS = { gb: '#4a90d9', gbc: '#5cb85c', gba: '#c2536a', nds: '#8e5cd9' };
+const SYSTEM_COLORS = {
+  gb: '#4a90d9', gbc: '#5cb85c', gba: '#c2536a', nds: '#8e5cd9', '3ds': '#d9534f', cci: '#d9534f', cxi: '#d9534f',
+};
 
 const extensionOf = (file) => file.slice(file.lastIndexOf('.') + 1).toLowerCase();
 const fileName = (file) => file.slice(Math.max(file.lastIndexOf('\\'), file.lastIndexOf('/')) + 1);

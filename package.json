@@ -14,7 +14,9 @@
     "build:melonds": "cmake -S third_party/melonds -B third_party/melonds/build-win -A x64 -DBUILD_QT_SDL=OFF -DENABLE_GDBSTUB=OFF -DENABLE_OGLRENDERER=OFF -DENABLE_JIT=OFF -DDIRENT_INCLUDE_DIRS=. -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded && cmake --build third_party/melonds/build-win --config Release --target core",
     "build:shared": "esbuild src/shared.ts --bundle --platform=node --target=node22 --format=cjs --outfile=build/shared.js",
     "dist": "npm run build && electron-builder",
-    "build:slirp": "cmake -S third_party/melonds/src/net/libslirp -B third_party/melonds/build-slirp -A x64 -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded && cmake --build third_party/melonds/build-slirp --config Release"
+    "build:slirp": "cmake -S third_party/melonds/src/net/libslirp -B third_party/melonds/build-slirp -A x64 -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded && cmake --build third_party/melonds/build-slirp --config Release",
+    "vendor:azahar": "git clone --depth 1 --branch 2126.1.2 --recurse-submodules --shallow-submodules https://github.com/azahar-emu/azahar.git third_party/azahar && git -C third_party/azahar apply ../../patches/azahar/0001-msvc-include-bit.patch ../../patches/azahar/0002-libretro-language-at-boot.patch",
+    "build:azahar": "cmake -S third_party/azahar -B third_party/azahar/build-win -A x64 -DENABLE_LIBRETRO=ON -DENABLE_VULKAN=OFF -DENABLE_TESTS=OFF -DENABLE_LTO=OFF -DCITRA_WARNINGS_AS_ERRORS=OFF -DCITRA_USE_PRECOMPILED_HEADERS=OFF && cmake --build third_party/azahar/build-win --config Release --target citra_libretro -- /m"
   },
   "devDependencies": {
     "cmake-js": "8.0.0",

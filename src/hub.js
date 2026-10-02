@@ -30,7 +30,7 @@ const DOWNLOAD_PAGE = 'https://www.emulatornds.online/app';
 
 // ROM extensions this app can actually boot, in the order worth preferring
 // when a downloaded archive holds more than one.
-const ROM_EXTENSIONS = ['nds', 'gba', 'gbc', 'gb'];
+const ROM_EXTENSIONS = ['3ds', 'cci', 'cxi', 'nds', 'gba', 'gbc', 'gb'];
 
 function userFile(...parts) {
   const full = path.join(app.getPath('userData'), ...parts);
@@ -87,7 +87,7 @@ function restoreToken() {
 //
 // The local sidecar .sav keeps using the ROM's filename, which is the
 // predictable thing on a desktop.
-const SYSTEM_BY_EXTENSION = { nds: 'nds', gba: 'gba', gbc: 'gb', gb: 'gb' };
+const SYSTEM_BY_EXTENSION = { '3ds': '3ds', cci: '3ds', cxi: '3ds', nds: 'nds', gba: 'gba', gbc: 'gb', gb: 'gb' };
 
 function gameKey(romPath) {
   const extension = path.extname(romPath).slice(1).toLowerCase();

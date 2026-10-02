@@ -1,0 +1,19 @@
+diff --git a/src/core/hle/service/cfg/cfg.cpp b/src/core/hle/service/cfg/cfg.cpp
+index 6eb7302..6384fc2 100644
+--- a/src/core/hle/service/cfg/cfg.cpp
++++ b/src/core/hle/service/cfg/cfg.cpp
+@@ -1050,6 +1050,14 @@ Module::Module(Core::System& system_) : system(system_) {
+     load_savegame_res = LoadConfigNANDSaveFile();
+     LoadMCUConfig();
+     (void)GetMacAddress();
++#ifdef HAVE_LIBRETRO
++    // The language from the core options, set before any game can read it.
++    // UpdatePreferredRegionCode only applies it once a game asks for its
++    // region, and a game that reads the language block straight away
++    // (Pokemon Mystery Dungeon: Gates to Infinity) never does, so it ran in
++    // English whatever the option said. multiemu patch.
++    SetSystemLanguage(LibRetro::settings.language_value);
++#endif
+     // Check the config savegame EULA Version and update it to 0x7F7F if necessary
+     // so users will never get a prompt to accept EULA
+     auto version = GetEULAVersion();

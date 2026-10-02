@@ -6,11 +6,11 @@ const hub = require('./hub');
 
 // A ROM given on the command line (double-clicking a .gb, or "Open with").
 // argv[0] is the executable itself.
-const romArgument = process.argv.slice(1).find((argument) => /\.(gbc?|gba|nds)$/i.test(argument));
+const romArgument = process.argv.slice(1).find((argument) => /\.(gbc?|gba|nds|3ds|cci|cxi)$/i.test(argument));
 
 // A .zip is offered too, like Android's file picker: the renderer hands it
 // to hub:unpack-rom before opening it.
-ipcMain.handle('pick-rom', async (event, title, extensions = ['gb', 'gbc', 'gba', 'nds', 'zip']) => {
+ipcMain.handle('pick-rom', async (event, title, extensions = ['gb', 'gbc', 'gba', 'nds', '3ds', 'cci', 'cxi', 'zip']) => {
   const { canceled, filePaths } = await dialog.showOpenDialog({
     title,
     properties: ['openFile'],

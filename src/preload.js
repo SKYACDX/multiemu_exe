@@ -6,6 +6,13 @@ const { contextBridge, ipcRenderer } = require('electron');
 const gb = require('../build/Release/gb_addon.node');
 const gba = require('../build/Release/gba_addon.node');
 const ds = require('../build/Release/ds_addon.node');
+const n3ds = require('../build/Release/n3ds_addon.node');
+
+// Azahar's libretro core, which n3ds_addon loads by path when a 3DS game
+// opens. Packaged, it sits in app.asar.unpacked rather than inside the
+// asar, where Windows cannot load a DLL from.
+const AZAHAR_CORE = path.join(__dirname, '..', 'build', 'Release', 'azahar_libretro.dll')
+  .replace(/app\.asar([\\/])/, 'app.asar.unpacked$1');
 
 // Every core numbers its buttons differently -- gb::Button (joypad.h),
 // mGBA's enum GBAKey, and the DS's own KeyInput order -- so the renderer is
@@ -14,6 +21,9 @@ const ds = require('../build/Release/ds_addon.node');
 const GB_BUTTONS = { right: 0, left: 1, up: 2, down: 3, a: 4, b: 5, select: 6, start: 7 };
 const GBA_BUTTONS = { a: 0, b: 1, select: 2, start: 3, right: 4, left: 5, up: 6, down: 7, r: 8, l: 9 };
 const DS_BUTTONS = { ...GBA_BUTTONS, x: 10, y: 11 };
+// libretro's joypad numbering (RETRO_DEVICE_ID_JOYPAD_*), which Azahar's
+// core maps onto the 3DS's buttons itself.
+const N3DS_BUTTONS = { b: 0, y: 1, select: 2, start: 3, up: 4, down: 5, left: 6, right: 7, a: 8, x: 9, l: 10, r: 11 };
 
 function argument(name) {
   const prefix = `--${name}=`;
@@ -101,7 +111,14 @@ function open(romPath) {
   ranSinceAutosave = false;
 
   let screens = 1;
-  if (/\.nds$/i.test(romPath)) {
+  if (/\.(3ds|cci|cxi)$/i.test(romPath)) {
+    // The console's NAND and SD card, and with them every 3DS save, live
+    // under here (Azahar/ inside it) rather than next to the ROM: a 3DS
+    // game saves into the console, not onto the cartridge file.
+    core = new n3ds.N3ds(AZAHAR_CORE, romPath, path.join(userDataDir, '3ds'));
+    buttons = N3DS_BUTTONS;
+    screens = 2; // top over bottom, like the DS
+  } else if (/\.nds$/i.test(romPath)) {
     // By path rather than by bytes: NDS images run to 512MB.
     core = new ds.Ds(romPath, sidecar);
     buttons = DS_BUTTONS;
@@ -266,7 +283,7 @@ contextBridge.exposeInMainWorld('emu', {
   listFolder: (folder) => {
     const files = [];
     for (const entry of fs.readdirSync(folder, { withFileTypes: true })) {
-      if (!entry.isFile() || !/\.(gbc?|gba|nds|zip)$/i.test(entry.name)) continue;
+      if (!entry.isFile() || !/\.(gbc?|gba|nds|3ds|cci|cxi|zip)$/i.test(entry.name)) continue;
       const file = path.join(folder, entry.name);
       files.push({ path: file, name: entry.name, size: fs.statSync(file).size });
     }

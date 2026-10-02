@@ -1,0 +1,12 @@
+diff --git a/src/video_core/pica_types.h b/src/video_core/pica_types.h
+index dcb691a..c0e5422 100644
+--- a/src/video_core/pica_types.h
++++ b/src/video_core/pica_types.h
+@@ -4,6 +4,7 @@
+ 
+ #pragma once
+ 
++#include <bit>
+ #include <cmath>
+ #include <cstring>
+ #include <boost/serialization/access.hpp>
