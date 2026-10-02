@@ -560,9 +560,9 @@ function drawAmbient() {
 }
 
 // The screen a Game Boy or GBA game is left on becomes its picture in the
-// recents and the ROM folder. A DS game has its icon instead.
+// recents and the ROM folder. A DS or 3DS game has its own icon instead.
 function keepLastScreen(rom) {
-  if (!rom || /\.nds$/i.test(rom)) return;
+  if (!rom || /\.(nds|3ds|cci|cxi)$/i.test(rom)) return;
   try {
     emu.saveScreen(rom, canvas.toDataURL('image/png'));
   } catch {

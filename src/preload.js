@@ -23,7 +23,9 @@ const GBA_BUTTONS = { a: 0, b: 1, select: 2, start: 3, right: 4, left: 5, up: 6,
 const DS_BUTTONS = { ...GBA_BUTTONS, x: 10, y: 11 };
 // libretro's joypad numbering (RETRO_DEVICE_ID_JOYPAD_*), which Azahar's
 // core maps onto the 3DS's buttons itself.
-const N3DS_BUTTONS = { b: 0, y: 1, select: 2, start: 3, up: 4, down: 5, left: 6, right: 7, a: 8, x: 9, l: 10, r: 11 };
+const N3DS_BUTTONS = {
+  b: 0, y: 1, select: 2, start: 3, up: 4, down: 5, left: 6, right: 7, a: 8, x: 9, l: 10, r: 11, zl: 12, zr: 13,
+};
 
 function argument(name) {
   const prefix = `--${name}=`;

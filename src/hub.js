@@ -229,6 +229,45 @@ async function dsIcon(romPath, entry) {
   return encodePng(32, 32, rgba);
 }
 
+// A 3DS game's 48x48 icon as PNG bytes, or null -- the one the console's
+// HOME Menu shows. It sits in the SMDH, the "icon" file of the ExeFS: a
+// .3ds/.cci is an NCSD holding NCCH partitions (the game is the first), a
+// .cxi is one NCCH on its own. The large icon is at 0x24C0 in the SMDH,
+// RGB565 in 8x8 tiles, the pixels of each tile in Morton order (3dbrew,
+// "SMDH"). An encrypted dump's ExeFS is unreadable without the console's
+// keys, so that gives null too.
+async function n3dsIcon(romPath, entry) {
+  const outer = await readRomRange(romPath, entry, 0, 0x200);
+  const magic = outer.toString('ascii', 0x100, 0x104);
+  const ncch = magic === 'NCSD' ? outer.readUInt32LE(0x120) * 0x200 : magic === 'NCCH' ? 0 : -1;
+  if (ncch < 0) return null;
+  const header = await readRomRange(romPath, entry, ncch, 0x200);
+  if (header.toString('ascii', 0x100, 0x104) !== 'NCCH' || !(header[0x18f] & 0x04)) return null;
+  const exefs = ncch + header.readUInt32LE(0x1a0) * 0x200;
+  const files = await readRomRange(romPath, entry, exefs, 0x200);
+  for (let i = 0; i < 10; i++) {
+    if (files.toString('ascii', i * 16, i * 16 + 8).replace(/\0+$/, '') !== 'icon') continue;
+    const smdh = await readRomRange(romPath, entry, exefs + 0x200 + files.readUInt32LE(i * 16 + 8), 0x36c0);
+    if (smdh.toString('ascii', 0, 4) !== 'SMDH') return null;
+    const rgba = Buffer.alloc(48 * 48 * 4);
+    for (let tile = 0; tile < 36; tile++) {
+      for (let p = 0; p < 64; p++) {
+        // Morton order: the bits of p alternate x and y, x first.
+        const x = (tile % 6) * 8 + ((p & 1) | ((p >> 1) & 2) | ((p >> 2) & 4));
+        const y = Math.floor(tile / 6) * 8 + (((p >> 1) & 1) | ((p >> 2) & 2) | ((p >> 3) & 4));
+        const color = smdh.readUInt16LE(0x24c0 + (tile * 64 + p) * 2);
+        const at = (y * 48 + x) * 4;
+        rgba[at] = (((color >> 11) & 0x1f) << 3) | ((color >> 13) & 0x07);
+        rgba[at + 1] = (((color >> 5) & 0x3f) << 2) | ((color >> 9) & 0x03);
+        rgba[at + 2] = ((color & 0x1f) << 3) | ((color >> 2) & 0x07);
+        rgba[at + 3] = 0xff;
+      }
+    }
+    return encodePng(48, 48, rgba);
+  }
+  return null;
+}
+
 // Keyed by the ROM's path: the same game opened from the same place.
 const pictureKey = (romPath) => crypto.createHash('sha1').update(romPath.toLowerCase()).digest('hex');
 // A .zip is played through the ROM it unpacks to (hub:unpack-rom), so its
@@ -322,12 +361,13 @@ function register() {
     }
     if (!entry) return null;
 
-    if (entry.extension === 'nds') {
+    const is3ds = ['3ds', 'cci', 'cxi'].includes(entry.extension);
+    if (entry.extension === 'nds' || is3ds) {
       const icon = userFile('covers', `${pictureKey(romPath)}-icon.png`);
       if (!fs.existsSync(icon)) {
         let png = null;
         try {
-          png = await dsIcon(romPath, entry);
+          png = await (is3ds ? n3dsIcon(romPath, entry) : dsIcon(romPath, entry));
         } catch {
           return null;
         }

@@ -16,10 +16,12 @@ const BUTTONS = [
   ['right', 'Derecha'],
   ['a', 'A'],
   ['b', 'B'],
-  ['x', 'X (solo DS)'],
-  ['y', 'Y (solo DS)'],
+  ['x', 'X (DS y 3DS)'],
+  ['y', 'Y (DS y 3DS)'],
   ['l', 'L'],
   ['r', 'R'],
+  ['zl', 'ZL (solo 3DS)'],
+  ['zr', 'ZR (solo 3DS)'],
   ['select', 'Select'],
   ['start', 'Start'],
 ];
@@ -39,6 +41,9 @@ const DEFAULT_BINDINGS = {
   y: { key: 'a', pad: 2 },
   l: { key: 'q', pad: 4 },
   r: { key: 'w', pad: 5 },
+  // The triggers, next to the bumpers that are L and R.
+  zl: { key: 'e', pad: 6 },
+  zr: { key: 'r', pad: 7 },
   select: { key: 'shift', pad: 8 },
   start: { key: 'enter', pad: 9 },
 };

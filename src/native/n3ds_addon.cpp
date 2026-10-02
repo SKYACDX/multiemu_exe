@@ -148,8 +148,8 @@ class N3ds : public Napi::ObjectWrap<N3ds> {
         return frames;
     }
     static void InputPoll() {}
-    static int16_t InputState(unsigned port, unsigned device, unsigned, unsigned id) {
-        return current && port == 0 ? current->inputState(device, id) : 0;
+    static int16_t InputState(unsigned port, unsigned device, unsigned index, unsigned id) {
+        return current && port == 0 ? current->inputState(device, index, id) : 0;
     }
     static uintptr_t CurrentFramebuffer() { return current ? current->fbo_ : 0; }
     // Warnings and errors only, unless MULTIEMU_3DS_VERBOSE is set.
@@ -211,7 +211,8 @@ class N3ds : public Napi::ObjectWrap<N3ds> {
             *static_cast<bool*>(data) = true;
             return true;
         case RETRO_ENVIRONMENT_SET_MESSAGE:
-            std::fprintf(stderr, "[azahar] %s\n", static_cast<retro_message*>(data)->msg);
+            lastMessage_ = static_cast<retro_message*>(data)->msg;
+            std::fprintf(stderr, "[azahar] %s\n", lastMessage_.c_str());
             return true;
         // Told, and nothing to do about it.
         case RETRO_ENVIRONMENT_SET_VARIABLES:
@@ -230,6 +231,9 @@ class N3ds : public Napi::ObjectWrap<N3ds> {
     }
 
     void videoRefresh(const void* data, unsigned width, unsigned height) {
+        // An empty 0x0 frame is what the core hands over when it has no game
+        // running -- see start(), which uses it to notice a failed load.
+        if (!data && width == 0) noGame_ = true;
         // A duplicate (nullptr) keeps the last picture; only a frame the
         // core actually rendered into our framebuffer is read back.
         if (data != RETRO_HW_FRAME_BUFFER_VALID) return;
@@ -255,8 +259,18 @@ class N3ds : public Napi::ObjectWrap<N3ds> {
         pictureHeight_ = height;
     }
 
-    int16_t inputState(unsigned device, unsigned id) {
+    int16_t inputState(unsigned device, unsigned index, unsigned id) {
         if (device == RETRO_DEVICE_JOYPAD) return (keys_ >> id) & 1;
+        // The Circle Pad, driven by the D-pad: plenty of 3DS games move only
+        // with the stick, and a keyboard has nothing else to offer it.
+        // Libretro's Y axis grows downwards.
+        if (device == RETRO_DEVICE_ANALOG && index == RETRO_DEVICE_INDEX_ANALOG_LEFT) {
+            const auto held = [this](unsigned button) { return (keys_ >> button) & 1; };
+            const int axis = id == RETRO_DEVICE_ID_ANALOG_X
+                                 ? held(RETRO_DEVICE_ID_JOYPAD_RIGHT) - held(RETRO_DEVICE_ID_JOYPAD_LEFT)
+                                 : held(RETRO_DEVICE_ID_JOYPAD_DOWN) - held(RETRO_DEVICE_ID_JOYPAD_UP);
+            return static_cast<int16_t>(axis * 0x7FFF);
+        }
         if (device != RETRO_DEVICE_POINTER) return 0;
         switch (id) {
         case RETRO_DEVICE_ID_POINTER_PRESSED:
@@ -373,7 +387,8 @@ class N3ds : public Napi::ObjectWrap<N3ds> {
         retro_game_info game{};
         game.path = romPath.c_str();
         if (!symbol<bool (*)(const retro_game_info*)>("retro_load_game")(&game)) {
-            return "el núcleo de 3DS no pudo cargar el juego";
+            return "el núcleo de 3DS no pudo cargar el juego" +
+                   (lastMessage_.empty() ? std::string() : " (" + lastMessage_ + ")");
         }
         loaded_ = true;
         if (!hwRender_) return "el núcleo de 3DS no pidió OpenGL";
@@ -393,6 +408,16 @@ class N3ds : public Napi::ObjectWrap<N3ds> {
         picture_.assign(static_cast<size_t>(baseWidth_) * baseHeight_ * 4, 0);
         pictureWidth_ = baseWidth_;
         pictureHeight_ = baseHeight_;
+
+        // A game the core could not load -- an encrypted dump, a damaged
+        // file -- still comes back from context_reset without complaint;
+        // its first frame is just empty, and the reason went out as a
+        // message. One frame is enough to tell.
+        retroRun_();
+        if (noGame_) {
+            return "el núcleo de 3DS no pudo arrancar el juego" +
+                   (lastMessage_.empty() ? std::string(". ¿Está cifrado?") : ": " + lastMessage_);
+        }
         return {};
     }
 
@@ -521,6 +546,8 @@ class N3ds : public Napi::ObjectWrap<N3ds> {
     bool (*retroUnserialize_)(const void*, size_t) = nullptr;
     bool initialized_ = false;
     bool loaded_ = false;
+    bool noGame_ = false;
+    std::string lastMessage_;
 
     HWND window_ = nullptr;
     HDC dc_ = nullptr;
