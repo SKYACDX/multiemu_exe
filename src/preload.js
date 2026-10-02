@@ -165,7 +165,15 @@ function openLink(romA, romB) {
   if (!system || system !== systemOf(romB)) {
     throw new Error('Los dos juegos tienen que ser de la misma consola: dos de 3DS, dos de DS, dos de GBA o dos de Game Boy.');
   }
-  if (system === '3ds') return open3dsLink(romA, romB);
+  // ponytail: the 3DS link works (two consoles join one room, see
+  // open3dsLink) but has not been through a trade or battle in a real game
+  // yet, so it stays out of releases until it has.
+  if (system === '3ds') {
+    if (!process.env.MULTIEMU_3DS_LINK) {
+      throw new Error('La conexión entre dos 3DS llegará en una próxima versión.');
+    }
+    return open3dsLink(romA, romB);
+  }
   const saveA = romA.replace(/\.[^.]+$/, '.sav');
   const saveB = romB.replace(/\.[^.]+$/, '.sav');
   // Windows paths are case-insensitive, so compare them that way.
