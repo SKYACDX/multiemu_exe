@@ -95,6 +95,11 @@ escritorio y aún no aplican porque falta el NDS:
   en OLD, `CMAKE_MSVC_RUNTIME_LIBRARY` se ignora allí y hay que poner
   `/MT` a mano en `CMAKE_C_FLAGS_RELEASE` — si no, el enlace falla con
   dos docenas de `__imp_*` sin resolver.
+- Azahar se compila con `/FIstring /FIchrono /FIalgorithm`: algunos de sus
+  ficheros usan `std::string` o `std::chrono` sin incluir el header y
+  funcionaban porque la STL de MSVC 17.9 los traía de rebote; las versiones
+  más nuevas (la del CI) ya no. Los flags por defecto (`/DWIN32 /D_WINDOWS
+  /EHsc`) se repiten porque pasar `CMAKE_CXX_FLAGS` los reemplaza.
 
 ### Los parches de melonDS
 
