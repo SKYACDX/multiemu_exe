@@ -10,9 +10,9 @@ on:
   workflow_dispatch:
   push:
     tags: ['v*']
-    # So a change to this file tests itself without a manual run.
+    # Changes to the build itself test themselves without a manual run.
     branches: [main]
-    paths: ['.github/workflows/build-windows.yml']
+    paths: ['.github/workflows/build-windows.yml', 'package.json', 'patches/**']
 
 permissions:
   contents: read
