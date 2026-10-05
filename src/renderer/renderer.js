@@ -281,8 +281,16 @@ canvas.addEventListener('mousemove', (event) => {
 // the stylus, or the game sees a permanently held touch.
 window.addEventListener('mouseup', () => emu.releaseTouch());
 
+// A 3DS game's save in the cloud is settled before its core starts -- see
+// settle3dsSave in hub.js. partnerRom, when given, is the second console on a
+// link, which has no cloud save of its own.
+async function playRom(romPath, partnerRom) {
+  if (!partnerRom && /\.(3ds|cci|cxi)$/i.test(romPath)) await settle3dsSave(romPath);
+  startRom(romPath, partnerRom);
+}
+
 // partnerRom, when given, is the second GBA on a link cable.
-function playRom(romPath, partnerRom) {
+function startRom(romPath, partnerRom) {
   let size;
   try {
     size = partnerRom ? emu.openLink(romPath, partnerRom) : emu.open(romPath);
@@ -351,12 +359,16 @@ function playRom(romPath, partnerRom) {
 // asks the user to reopen the game afterwards.
 function stopGame() {
   if (!currentRom) return;
-  keepLastScreen(loadedRom());
+  const rom = loadedRom();
+  keepLastScreen(rom);
   loopToken++;  // any pending timer now belongs to a dead game
   paused = false;
   currentRom = null;
   linked = false;
   emu.close();
+  // With the core closed nothing is writing to a 3DS game's save, so this is
+  // the one moment its last changes can go up safely.
+  uploadOnExit(rom);
   audioStop();
   canvas.hidden = true;
   showCover(null);
@@ -407,7 +419,10 @@ window.addEventListener('keydown', (event) => {
 // Subir/Bajar -- see uploadState and downloadState in hub.js.
 function stateSlotRow(slot, savedAt) {
   const auto = slot === AUTO_STATE_SLOT;
-  const cloud = !auto && signedIn ? cloudSaveIn(slot) : null;
+  // A 3DS state is far over the 20MB the cloud takes per file, so only that
+  // game's own save is synced -- see src/save3ds.js.
+  const cloudStates = signedIn && !is3ds(currentRom);
+  const cloud = !auto && cloudStates ? cloudSaveIn(slot) : null;
   const row = element('div', undefined, 'row slot');
   const label = element('div', undefined, 'title');
   label.append(
@@ -431,7 +446,7 @@ function stateSlotRow(slot, savedAt) {
   button(slot === 0 ? 'Cargar (F8)' : 'Cargar', () => {
     if (saveOrLoadState(false, slot)) resumeGame();
   }, !savedAt);
-  if (!auto && signedIn) {
+  if (!auto && cloudStates) {
     button('Subir', () => uploadState(slot));
     button('Bajar', () => downloadState(slot), !cloud);
   }

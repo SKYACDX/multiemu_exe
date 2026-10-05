@@ -91,3 +91,15 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => app.quit());
+
+// A cloud save uploading when the window closes gets a few seconds to finish
+// rather than being cut off with the process.
+let uploadsDone = false;
+app.on('before-quit', (event) => {
+  if (uploadsDone || !hub.uploading()) return;
+  event.preventDefault();
+  hub.waitForUploads(8000).finally(() => {
+    uploadsDone = true;
+    app.quit();
+  });
+});

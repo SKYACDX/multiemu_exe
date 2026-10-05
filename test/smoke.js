@@ -452,6 +452,7 @@ assert.strictEqual(
 // check, and it already caught four files.
 for (const file of [
   'src/hub.js',
+  'src/save3ds.js',
   'src/main.js',
   'src/preload.js',
   'src/renderer/hub.js',
@@ -466,5 +467,8 @@ for (const file of [
     `${file} is not valid UTF-8`,
   );
 }
+
+// The 3DS cloud save: pure JS, so it lives in its own file and runs here too.
+require('./save3ds.test.js');
 
 console.log('smoke: ok');

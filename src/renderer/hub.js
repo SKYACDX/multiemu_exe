@@ -381,6 +381,12 @@ const GAME_SAVE_SLOT = 99;
 // The file name Android uploads the battery save under.
 const GAME_SAVE_FILENAME = 'game.sav';
 
+// A 3DS game saves a folder of files into the emulated console, not a .sav
+// beside the ROM; it goes up as a zip (src/save3ds.js). The path below is
+// still passed for it and simply not used.
+const is3ds = (rom) => /\.(3ds|cci|cxi)$/i.test(rom);
+const gameSaveFilename = (rom) => (is3ds(rom) ? 'game.zip' : GAME_SAVE_FILENAME);
+
 const batterySavePath = (rom) => rom.replace(/\.[^.]+$/, '.sav');
 
 // The game's own save up to the cloud: the account panel's button and the
@@ -398,7 +404,7 @@ async function uploadGameSave(report) {
       romPath: rom,
       savePath: batterySavePath(rom),
       slot: GAME_SAVE_SLOT,
-      filename: GAME_SAVE_FILENAME,
+      filename: gameSaveFilename(rom),
     });
     report('Partida subida.');
     return true;
@@ -418,7 +424,7 @@ async function bringGameSave(save) {
   // over it moments later.
   emu.close();
   try {
-    await hub.downloadSave({ id: save.id, savePath: batterySavePath(rom) });
+    await hub.downloadSave({ id: save.id, savePath: batterySavePath(rom), romPath: rom });
     toast('Guardado traído de la nube');
   } catch (error) {
     // A toast, not a panel's status line: playRom below hides the panels
@@ -488,9 +494,7 @@ async function downloadState(slot) {
 
 function showGameSaveRow() {
   const box = document.getElementById('game-save');
-  // A 3DS game saves into the emulated console, not to a .sav beside the
-  // ROM, so there is no file for this row to move.
-  box.hidden = !loadedRom() || /\.(3ds|cci|cxi)$/i.test(loadedRom());
+  box.hidden = !loadedRom();
   if (!signedIn) {
     box.replaceChildren(element('p', 'Inicia sesión en Cuenta para sincronizar guardados en la nube.', 'muted'));
     return;
@@ -658,19 +662,30 @@ let syncChecking = null;
 // opened again, when the question comes back.
 let syncPutOff = false;
 
-// The game open, if it is one Android syncs: GBA and DS only (its
-// autoSyncGameSave and checkGameSaveConflict skip the Game Boy). A Game Boy
-// save can still go up by hand, with the Subir buttons.
+// The game open, if it is one Android syncs: GBA and DS (its
+// autoSyncGameSave and checkGameSaveConflict skip the Game Boy) and, here, 3DS.
+// A Game Boy save can still go up by hand, with the Subir buttons.
 function syncedRom() {
   const rom = loadedRom();
-  return rom && /\.(gba|nds)$/i.test(rom) ? rom : null;
+  return rom && /\.(gba|nds|3ds|cci|cxi)$/i.test(rom) ? rom : null;
 }
+
+// What settle3dsSave decided before the 3DS core started, handed on to
+// startCloudSync so the question is not asked twice.
+let settled3ds = null;
 
 function startCloudSync() {
   syncedCrc = null;
   syncChecked = false;
   syncChecking = null;
   syncPutOff = false;
+  const settled = settled3ds && settled3ds.rom === loadedRom() ? settled3ds : null;
+  settled3ds = null;
+  if (settled) {
+    ({ crc: syncedCrc, putOff: syncPutOff } = settled);
+    syncChecked = true;
+    return;
+  }
   if (signedIn) checkCloudSave();
 }
 
@@ -708,40 +723,25 @@ async function compareWithCloud() {
     return;
   }
 
-  const date = new Date(status.remote.updatedAt).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short', hour12: false });
-  // Android's alert cannot be dismissed without an answer; this dialog can
-  // (Esc, the X), so the last button is what dismissing means. Here that is
-  // "later" rather than either side -- a closed window is not a choice to
-  // overwrite anything.
-  const choice = status.localCrc === null
-    ? await hub.ask({
-        title: 'Guardado en la nube encontrado',
-        message: `Este juego no tiene datos locales, pero sí un guardado en la nube del ${date}. ¿Descargarlo?`,
-        buttons: ['Descargar', 'No'],
-      })
-    : await hub.ask({
-        title: 'El guardado de este juego no coincide con la nube',
-        message: `La nube tiene una versión del ${date}. ¿Cuál quieres conservar?`,
-        buttons: ['La nube', 'Este equipo', 'Más tarde'],
-      });
+  const choice = await askWhichSave(status);
   // Closed, or switched to another game, while the question was up.
   if (loadedRom() !== rom) return;
-  if (choice === 2) {
+  if (choice === 'later') {
     syncPutOff = true;
     return;
   }
-  const keepCloud = choice === 0;
+  const keepCloud = choice === 'cloud';
 
   try {
     if (keepCloud) {
       // As with "Traer": the core has to let go of the file first, and
       // reopening runs this comparison again, which then finds them equal.
       emu.close();
-      await hub.downloadSave({ id: status.remote.id, savePath });
+      await hub.downloadSave({ id: status.remote.id, savePath, romPath: rom });
       toast('Guardado traído de la nube');
       playRom(rom);
     } else if (status.localCrc !== null) {
-      syncedCrc = await hub.uploadSave({ romPath: rom, savePath, slot: GAME_SAVE_SLOT, filename: GAME_SAVE_FILENAME });
+      syncedCrc = await hub.uploadSave({ romPath: rom, savePath, slot: GAME_SAVE_SLOT, filename: gameSaveFilename(rom) });
       syncChecked = true;
     } else {
       syncChecked = true; // no local save and the cloud's declined
@@ -751,6 +751,115 @@ async function compareWithCloud() {
     if (keepCloud) playRom(rom);
   }
 }
+
+// Which side wins when the game's save and the cloud's differ: 'cloud',
+// 'local' or 'later'. Asked in the same words wherever it comes up.
+async function askWhichSave(status) {
+  const date = new Date(status.remote.updatedAt).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short', hour12: false });
+  // Android's alert cannot be dismissed without an answer; this dialog can
+  // (Esc, the X), so the last button is what dismissing means. Here that is
+  // "later" rather than either side -- a closed window is not a choice to
+  // overwrite anything.
+  if (status.localCrc === null) {
+    const choice = await hub.ask({
+      title: 'Guardado en la nube encontrado',
+      message: `Este juego no tiene datos locales, pero sí un guardado en la nube del ${date}. ¿Descargarlo?`,
+      buttons: ['Descargar', 'No'],
+    });
+    return choice === 0 ? 'cloud' : 'local';
+  }
+  const choice = await hub.ask({
+    title: 'El guardado de este juego no coincide con la nube',
+    message: `La nube tiene una versión del ${date}. ¿Cuál quieres conservar?`,
+    buttons: ['La nube', 'Este equipo', 'Más tarde'],
+  });
+  return ['cloud', 'local', 'later'][choice];
+}
+
+// A 3DS game's save is files in the console's SD card, which the core holds
+// open from the moment it starts: so a save that has to come down from the
+// cloud is put in place BEFORE the core exists, here, instead of closing a
+// running game, replacing the files and reopening it as the other consoles
+// do. It also avoids a trap: a game that has just booted may already have
+// written a blank save, which would turn "nothing local, download?" into
+// "which one wins?", with a way to overwrite the cloud's real save.
+//
+// Anything that goes wrong (offline, a ROM that cannot be identified) just
+// lets the game open; the comparison after it starts tries again.
+async function settle3dsSave(rom) {
+  settled3ds = null;
+  if (!signedIn) return;
+  const savePath = batterySavePath(rom);
+  let status;
+  try {
+    status = await hub.saveStatus({ romPath: rom, savePath, slot: GAME_SAVE_SLOT });
+  } catch {
+    return; // offline, or a ROM it cannot identify: the game opens with what is here
+  }
+
+  // The CRC this PC and the cloud agree on, once they do; null while nothing
+  // is known to match, so the first periodic upload decides.
+  let crc = null;
+  let putOff = false;
+  if (!status.remote) {
+    // Nothing up there yet; the first upload creates it.
+  } else if (status.localCrc === status.remote.crc) {
+    crc = status.remote.crc;
+  } else {
+    const choice = await askWhichSave(status);
+    putOff = choice === 'later';
+    try {
+      if (choice === 'cloud') {
+        await hub.downloadSave({ id: status.remote.id, savePath, romPath: rom });
+        crc = status.remote.crc;
+        toast('Guardado traído de la nube');
+      } else if (choice === 'local' && status.localCrc !== null) {
+        crc = await hub.uploadSave({ romPath: rom, savePath, slot: GAME_SAVE_SLOT, filename: gameSaveFilename(rom) });
+      }
+    } catch (error) {
+      toast(ipcErrorMessage(error));
+      // The cloud's was chosen and could not be put in place: syncing now
+      // would upload this PC's over the very save the user wanted.
+      putOff = choice === 'cloud';
+    }
+  }
+  settled3ds = { rom, crc, putOff };
+}
+
+// The save of a 3DS game that has just been closed, up to the cloud: nothing
+// is writing to it any more, so it goes without waiting for it to settle.
+function uploadOnExit(rom) {
+  if (!rom || !is3ds(rom) || !signedIn || !syncChecked || syncPutOff) return;
+  hub
+    .syncSave({
+      romPath: rom,
+      savePath: batterySavePath(rom),
+      slot: GAME_SAVE_SLOT,
+      filename: gameSaveFilename(rom),
+      lastCrc: syncedCrc,
+      settled: true,
+    })
+    .then((crc) => {
+      syncedCrc = crc;
+    })
+    .catch(() => {});
+}
+
+// Closing the window mid-game: the core is still running here, so this is the
+// ordinary periodic upload (which skips a save touched a moment ago) rather
+// than a forced one. The main process holds the quit until it finishes.
+window.addEventListener('beforeunload', () => {
+  const rom = loadedRom();
+  if (rom && is3ds(rom) && signedIn && syncChecked && !syncPutOff) {
+    hub.syncSave({
+      romPath: rom,
+      savePath: batterySavePath(rom),
+      slot: GAME_SAVE_SLOT,
+      filename: gameSaveFilename(rom),
+      lastCrc: syncedCrc,
+    }).catch(() => {});
+  }
+});
 
 async function syncCloudSave() {
   const rom = syncedRom();
@@ -762,7 +871,7 @@ async function syncCloudSave() {
       romPath: rom,
       savePath: batterySavePath(rom),
       slot: GAME_SAVE_SLOT,
-      filename: GAME_SAVE_FILENAME,
+      filename: gameSaveFilename(rom),
       lastCrc: syncedCrc,
     });
   } catch {

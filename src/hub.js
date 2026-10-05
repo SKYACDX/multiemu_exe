@@ -15,6 +15,7 @@ const zlib = require('zlib');
 const { BrowserWindow, Notification, app, dialog, ipcMain, safeStorage, shell } = require('electron');
 
 const shared = require('../build/shared.js');
+const save3ds = require('./save3ds');
 
 // This build's place in RomHack Hub's versionCode sequence, which is shared
 // across platforms rather than per-platform (see docs/app-listing-api.md in
@@ -87,9 +88,16 @@ function restoreToken() {
 //
 // The local sidecar .sav keeps using the ROM's filename, which is the
 // predictable thing on a desktop.
-const SYSTEM_BY_EXTENSION = { '3ds': '3ds', cci: '3ds', cxi: '3ds', nds: 'nds', gba: 'gba', gbc: 'gb', gb: 'gb' };
+//
+// A 3DS game is the exception, and not by this scheme at all: its key is its
+// program ID (see src/save3ds.js), because a 3DS dump is 1-4GB, too big to
+// read whole for a CRC, and the CRC differs between dumps of the same game.
+const SYSTEM_BY_EXTENSION = { nds: 'nds', gba: 'gba', gbc: 'gb', gb: 'gb' };
 
-function gameKey(romPath) {
+const isN3ds = (romPath) => /\.(3ds|cci|cxi)$/i.test(romPath);
+
+async function gameKey(romPath) {
+  if (isN3ds(romPath)) return save3ds.gameKey(await n3dsId(romPath));
   const extension = path.extname(romPath).slice(1).toLowerCase();
   const system = SYSTEM_BY_EXTENSION[extension] || 'gb';
   return shared.cloudGameKey(system, new Uint8Array(fs.readFileSync(romPath)));
@@ -296,6 +304,70 @@ function requireToken() {
   if (!token) throw new Error('No has iniciado sesión');
   return token;
 }
+
+// ---- A game's save, wherever it lives -----------------------------------------
+//
+// For Game Boy, GBA and DS it is one .sav file. For a 3DS game it is a folder
+// inside the emulated console's SD card, packed as a zip on the way up and
+// unpacked on the way down (src/save3ds.js has the format and the reasons).
+// The "crc" of a 3DS save is that module's fingerprint, since a zip's own
+// bytes are not the same from one machine to the next.
+
+async function n3dsId(romPath) {
+  const entry = romEntry(romPath);
+  const id = entry && (await save3ds.programId((offset, length) => readRomRange(romPath, entry, offset, length)));
+  if (!id) throw new Error('No se pudo identificar este juego de 3DS para su guardado en la nube');
+  return id;
+}
+
+async function n3dsDataDir(romPath) {
+  return save3ds.dataDir(app.getPath('userData'), await n3dsId(romPath));
+}
+
+// { bytes, crc } of what this PC has, or null when the game has not saved
+// anything yet.
+async function localSave(romPath, savePath) {
+  if (isN3ds(romPath)) {
+    const tree = save3ds.readTree(await n3dsDataDir(romPath));
+    return save3ds.hasSaveData(tree) ? { bytes: save3ds.pack(tree), crc: save3ds.fingerprint(tree) } : null;
+  }
+  if (!fs.existsSync(savePath)) return null;
+  const bytes = new Uint8Array(fs.readFileSync(savePath));
+  return { bytes, crc: zlib.crc32(bytes) };
+}
+
+const remoteCrc = (romPath, bytes) => (isN3ds(romPath) ? save3ds.fingerprint(save3ds.unpack(bytes)) : zlib.crc32(bytes));
+
+// Puts a cloud save in place of the 3DS game's own. The one it replaces goes
+// to save-backups/ first, so choosing the cloud's is never a one-way door. The
+// zip is unpacked before anything on disk is touched: a damaged one changes
+// nothing.
+async function restore3dsSave(romPath, zipBytes) {
+  const id = await n3dsId(romPath);
+  const dir = save3ds.dataDir(app.getPath('userData'), id);
+  const incoming = save3ds.unpack(zipBytes);
+  const current = save3ds.readTree(dir);
+  if (save3ds.hasSaveData(current)) {
+    fs.writeFileSync(userFile('save-backups', `3ds-${id}.zip`), save3ds.pack(current));
+  }
+  save3ds.writeTree(dir, incoming);
+}
+
+// A save the core wrote less than this long ago may be half written (it
+// writes straight through while the game runs), so the periodic upload waits.
+const SAVE_SETTLE_MS = 5000;
+
+// Uploads in flight, so closing the window does not cut one off: main.js holds
+// the quit until they finish.
+const uploads = new Set();
+function trackUpload(work) {
+  uploads.add(work);
+  work.catch(() => {}).finally(() => uploads.delete(work));
+  return work;
+}
+const uploading = () => uploads.size > 0;
+const waitForUploads = (timeoutMs) =>
+  Promise.race([Promise.allSettled([...uploads]), new Promise((resolve) => setTimeout(resolve, timeoutMs))]);
 
 // ---- Handlers ---------------------------------------------------------
 
@@ -535,12 +607,15 @@ function register() {
   // bytes, when given, go up instead of savePath's contents: a state taken
   // from the running game, which is what Android's slot "Subir" sends.
   ipcMain.handle('hub:save-upload', async (event, { romPath, savePath, bytes: given, slot, filename }) => {
-    if (!given && !fs.existsSync(savePath)) {
-      throw new Error('Este juego todavía no ha guardado nada');
+    let bytes = given;
+    let crc = given && zlib.crc32(given);
+    if (!given) {
+      const local = await localSave(romPath, savePath);
+      if (!local) throw new Error('Este juego todavía no ha guardado nada');
+      ({ bytes, crc } = local);
     }
-    const bytes = given || new Uint8Array(fs.readFileSync(savePath));
-    await shared.uploadCloudSave(requireToken(), gameKey(romPath), slot, bytes, filename);
-    return zlib.crc32(bytes);
+    await shared.uploadCloudSave(requireToken(), await gameKey(romPath), slot, bytes, filename);
+    return crc;
   });
 
   // For the check Android makes when a game opens (checkGameSaveConflict in
@@ -549,16 +624,17 @@ function register() {
   // be downloaded for that -- the API lists no checksum -- but it is a few
   // kilobytes. Null for a side that has nothing.
   ipcMain.handle('hub:save-status', async (event, { romPath, savePath, slot }) => {
-    const key = gameKey(romPath);
+    const key = await gameKey(romPath);
     const remote = (await shared.listCloudSaves(requireToken())).find(
       (save) => save.gameKey === key && save.slot === slot,
     );
+    const local = await localSave(romPath, savePath);
     return {
-      localCrc: fs.existsSync(savePath) ? zlib.crc32(fs.readFileSync(savePath)) : null,
+      localCrc: local ? local.crc : null,
       remote: remote && {
         id: remote.id,
         updatedAt: remote.updatedAt,
-        crc: zlib.crc32(await shared.downloadCloudSave(token, remote.id)),
+        crc: remoteCrc(romPath, await shared.downloadCloudSave(token, remote.id)),
       },
     };
   });
@@ -566,14 +642,23 @@ function register() {
   // One tick of Android's automatic upload (autoSyncGameSave): the battery
   // save goes up only if it changed since the last sync. Returns the CRC the
   // cloud now holds, for the next tick to compare against.
-  ipcMain.handle('hub:save-sync', async (event, { romPath, savePath, slot, filename, lastCrc }) => {
-    if (!fs.existsSync(savePath)) return lastCrc;
-    const bytes = new Uint8Array(fs.readFileSync(savePath));
-    const crc = zlib.crc32(bytes);
-    if (crc === lastCrc) return lastCrc;
-    await shared.uploadCloudSave(requireToken(), gameKey(romPath), slot, bytes, filename);
-    return crc;
-  });
+  //
+  // settled says the core is closed, so a file touched a moment ago is not a
+  // half-written one (a 3DS game's save is many files; see SAVE_SETTLE_MS).
+  ipcMain.handle('hub:save-sync', (event, { romPath, savePath, slot, filename, lastCrc, settled }) =>
+    trackUpload(
+      (async () => {
+        if (isN3ds(romPath) && !settled) {
+          const touched = save3ds.newestMtimeMs(await n3dsDataDir(romPath));
+          if (Date.now() - touched < SAVE_SETTLE_MS) return lastCrc;
+        }
+        const local = await localSave(romPath, savePath);
+        if (!local || local.crc === lastCrc) return lastCrc;
+        await shared.uploadCloudSave(requireToken(), await gameKey(romPath), slot, local.bytes, filename);
+        return local.crc;
+      })(),
+    ),
+  );
 
   // Android's feedback screen (FeedbackScreen.tsx, docs/feedback-api.md):
   // signed in it goes under the account, otherwise as a guest with an
@@ -612,8 +697,14 @@ function register() {
     return response;
   });
 
-  ipcMain.handle('hub:save-download', async (event, { id, savePath }) => {
+  // romPath is given for a game's own save, which for a 3DS game is a folder
+  // rather than the file savePath names; a state has neither and only a path.
+  ipcMain.handle('hub:save-download', async (event, { id, savePath, romPath }) => {
     const bytes = await shared.downloadCloudSave(requireToken(), id);
+    if (romPath && isN3ds(romPath)) {
+      await restore3dsSave(romPath, bytes);
+      return romPath;
+    }
     fs.writeFileSync(savePath, bytes);
     return savePath;
   });
@@ -622,4 +713,4 @@ function register() {
   ipcMain.handle('hub:save-delete', (event, id) => shared.deleteCloudSave(requireToken(), id));
 }
 
-module.exports = { register, VERSION_CODE };
+module.exports = { register, VERSION_CODE, uploading, waitForUploads };
