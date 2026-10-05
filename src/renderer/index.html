@@ -401,16 +401,19 @@
     <button class="back">Volver</button>
     <h1>Cuenta de RomHack Hub</h1>
   </div>
-  <form id="login">
-    <div class="row"><input type="email" id="email" placeholder="Correo" required /></div>
+  <!-- autocomplete off: Chromium would otherwise keep what is typed here in
+       the profile and fill it back in; after the infostealer on this PC the
+       user chose not to keep the account password anywhere on disk. -->
+  <form id="login" autocomplete="off">
+    <div class="row"><input type="email" id="email" placeholder="Correo" autocomplete="off" required /></div>
     <div class="row" style="margin-top: 8px">
-      <input type="password" id="password" placeholder="Contraseña" required />
+      <input type="password" id="password" placeholder="Contraseña" autocomplete="new-password" required />
       <button type="submit" class="primary">Entrar</button>
     </div>
   </form>
   <form id="totp" hidden>
     <div class="row">
-      <input type="text" id="totp-code" placeholder="Código de dos factores" inputmode="numeric" />
+      <input type="text" id="totp-code" placeholder="Código de dos factores" inputmode="numeric" autocomplete="off" />
       <button type="submit" class="primary">Verificar</button>
     </div>
   </form>
