@@ -262,3 +262,8 @@ este puerto al principio— aterriza encima de un estado hecho en el móvil.
 
 `cloudGameKey` vive en `src/shared.ts` junto al resto de contratos con el
 repo compartido, y el test lo fija en las dos direcciones.
+
+
+## Licencia
+
+multiemu es software libre bajo la [GNU GPL v3 o posterior](LICENSE). Los emuladores que incluye conservan sus propias licencias; ver [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

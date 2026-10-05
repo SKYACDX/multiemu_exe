@@ -29,5 +29,5 @@
     "node-addon-api": "8.9.2"
   },
   "author": "SKYACDX",
-  "license": "UNLICENSED"
+  "license": "GPL-3.0-or-later"
 }
