@@ -19,7 +19,10 @@ permissions:
 
 jobs:
   build:
-    runs-on: windows-latest
+    # VS 2022, like the local build. windows-latest has VS 2026 (v18), whose
+    # MASM rule fails on Azahar's cryptopp (ml64 can't open
+    # cryptopp.dir\Release\src/random/rdrand.asm.obj).
+    runs-on: windows-2022
     timeout-minutes: 180
     env:
       # The runner ships CMake 4, which refuses cmake_minimum_required < 3.5;
