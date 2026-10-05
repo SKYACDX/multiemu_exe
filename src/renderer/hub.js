@@ -270,7 +270,7 @@ async function loadCloudSaves() {
   cloudSaves.replaceChildren();
   let saves;
   try {
-    saves = await hub.saves();
+    saves = (await hub.saves()).filter((save) => !isOtherPlatformState(save));
   } catch (error) {
     accountStatus.textContent = ipcErrorMessage(error);
     return;
@@ -297,6 +297,11 @@ async function loadCloudSaves() {
   accountStatus.textContent = onlyThisGame ? 'Guardados de este juego.' : '';
   cloudSaves.replaceChildren(...saves.map(saveRow));
 }
+
+// The Android app keeps its 3DS states in slots 10-13 (src/save3ds.js): Azahar's
+// state format is not portable between platforms, so they can never load here
+// and are not listed. Slot 99, the game's own save, is shared and stays.
+const isOtherPlatformState = (save) => save.slot >= 10 && save.slot !== GAME_SAVE_SLOT;
 
 // Slot -1 is the in-game battery save; 0-3 are whole-machine states, and
 // Android's 3 is its automatic one. Naming them matters now that both kinds

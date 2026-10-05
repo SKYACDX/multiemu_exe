@@ -14,7 +14,13 @@
 //             the NCCH header. Not a CRC of the ROM: a 3DS dump is 1-4GB and
 //             differs between .3ds/.cci/.cxi and encrypted/decrypted copies of
 //             the same game, while the program ID never does.
-//   slot      99, as for the other consoles' battery save.
+//   slots     99 is the game's save (this zip), as for the other consoles'
+//             battery save, and works on both platforms. Save STATES do not:
+//             Azahar writes them with boost binary_archive, whose `long` is 4
+//             bytes on MSVC and 8 on arm64, so a state from one never loads on
+//             the other. Each platform keeps its own under the same key and
+//             name "slotN.sav": Windows 0-3, Android 10-13 (10+N, 13 the
+//             automatic one). Each lists and downloads only its own.
 //   zip       the contents of the `data` folder only, paths relative to it
 //             ("00000001.metadata", "00000001/00000001.sav"), forward slashes,
 //             no id0/id1 and no "title/..." prefix, so it restores into
