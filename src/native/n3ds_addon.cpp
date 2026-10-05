@@ -154,9 +154,14 @@ class Console {
 
     // Local wireless, through the room calls patches/azahar/0003 adds.
     bool hostRoom(unsigned port) { return roomHost_ && roomHost_(port); }
-    void joinRoom(unsigned port, const char* nickname) {
-        if (roomJoin_) roomJoin_(port, nickname);
+    void joinRoom(const char* host, unsigned port, const char* nickname, const char* password) {
+        if (roomJoin_) roomJoin_(host, port, nickname, password);
     }
+    void leaveRoom() {
+        if (roomLeave_) roomLeave_();
+    }
+    int roomState() const { return roomState_ ? roomState_() : -1; }
+    int roomError() const { return roomError_ ? roomError_() : -1; }
     int roomMembers() const { return roomMembers_ ? roomMembers_() : 0; }
 
     unsigned width() const { return baseWidth_; }
@@ -226,7 +231,10 @@ class Console {
     bool (*retroSerialize_)(void*, size_t) = nullptr;
     bool (*retroUnserialize_)(const void*, size_t) = nullptr;
     bool (*roomHost_)(unsigned) = nullptr;
-    void (*roomJoin_)(unsigned, const char*) = nullptr;
+    void (*roomJoin_)(const char*, unsigned, const char*, const char*) = nullptr;
+    void (*roomLeave_)() = nullptr;
+    int (*roomState_)() = nullptr;
+    int (*roomError_)() = nullptr;
     int (*roomMembers_)() = nullptr;
     bool initialized_ = false;
     bool loaded_ = false;
@@ -460,7 +468,10 @@ std::string Console::start(const std::string& corePath, const std::string& romPa
     retroSerialize_ = symbol<bool (*)(void*, size_t)>("retro_serialize");
     retroUnserialize_ = symbol<bool (*)(const void*, size_t)>("retro_unserialize");
     roomHost_ = symbol<bool (*)(unsigned)>("multiemu_room_host");
-    roomJoin_ = symbol<void (*)(unsigned, const char*)>("multiemu_room_join");
+    roomJoin_ = symbol<void (*)(const char*, unsigned, const char*, const char*)>("multiemu_room_join");
+    roomLeave_ = symbol<void (*)()>("multiemu_room_leave");
+    roomState_ = symbol<int (*)()>("multiemu_room_state");
+    roomError_ = symbol<int (*)()>("multiemu_room_error");
     roomMembers_ = symbol<int (*)()>("multiemu_room_members");
 
     std::string error = createContext();
@@ -587,6 +598,9 @@ class N3ds : public Napi::ObjectWrap<N3ds> {
                                InstanceMethod("readAudio", &N3ds::readAudio),
                                InstanceMethod("saveState", &N3ds::saveState),
                                InstanceMethod("loadState", &N3ds::loadState),
+                               InstanceMethod("joinRoom", &N3ds::joinRoom),
+                               InstanceMethod("leaveRoom", &N3ds::leaveRoom),
+                               InstanceMethod("roomStatus", &N3ds::roomStatus),
                                InstanceMethod("close", &N3ds::close),
                                InstanceAccessor("audioSampleRate", &N3ds::audioSampleRate, nullptr),
                                InstanceAccessor("width", &N3ds::width, nullptr),
@@ -662,6 +676,31 @@ class N3ds : public Napi::ObjectWrap<N3ds> {
         return Napi::Boolean::New(info.Env(), console_.loadState(bytes.Data(), bytes.ByteLength()));
     }
 
+    // Local wireless with another PC or phone: joinRoom(host, port, nickname,
+    // password) joins a room server, and the game's local wireless then sees
+    // everyone in that room. Joining finishes on the room's own threads, so
+    // roomStatus is polled: state is Network::RoomMember::State (3 joined,
+    // 4 joined as moderator, 1 not in a room), error its Error (-1 none).
+    void joinRoom(const Napi::CallbackInfo& info) {
+        if (!ready(info.Env())) return;
+        console_.joinRoom(info[0].As<Napi::String>().Utf8Value().c_str(), info[1].As<Napi::Number>().Uint32Value(),
+                          info[2].As<Napi::String>().Utf8Value().c_str(),
+                          info[3].As<Napi::String>().Utf8Value().c_str());
+    }
+
+    void leaveRoom(const Napi::CallbackInfo&) {
+        if (console_.running()) console_.leaveRoom();
+    }
+
+    Napi::Value roomStatus(const Napi::CallbackInfo& info) {
+        auto out = Napi::Object::New(info.Env());
+        const bool on = console_.running();
+        out.Set("state", on ? console_.roomState() : -1);
+        out.Set("error", on ? console_.roomError() : -1);
+        out.Set("members", on ? console_.roomMembers() : 0);
+        return out;
+    }
+
     Napi::Value audioSampleRate(const Napi::CallbackInfo& info) {
         return Napi::Number::New(info.Env(), console_.sampleRate());
     }
@@ -728,8 +767,8 @@ class N3dsLink : public Napi::ObjectWrap<N3dsLink> {
         }
         // Joining takes a moment on the room's own threads; roomMembers
         // reports when both are in.
-        consoles_[0].joinRoom(port, "Jugador 1");
-        consoles_[1].joinRoom(port, "Jugador 2");
+        consoles_[0].joinRoom("127.0.0.1", port, "Jugador 1", "");
+        consoles_[1].joinRoom("127.0.0.1", port, "Jugador 2", "");
     }
 
    private:

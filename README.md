@@ -147,6 +147,31 @@ ajustes de la CWF de Nintendo desde dentro de un juego compatible y poner
 un DNS comunitario a mano — los pasos exactos están en el changelog de la
 v1.8 de Android.
 
+### Inalámbrica de 3DS por internet
+
+La inalámbrica local del 3DS (NWM_UDS) va por las salas de Azahar: cada
+consola entra a una sala y el juego ve a las demás como si estuvieran al
+lado. Las dos consolas de "2 jugadores" usan una sala en el loopback que
+aloja la primera; el modo de un jugador entra a una sala de un servidor
+para jugar con otra PC o con la app de Android (menú de pausa →
+"Inalámbrica por internet").
+
+El servidor es el de Azahar sin cambios (`citra_room_standalone`, que sale
+como `azahar-room`, del mismo tag que el núcleo: si el `network_version`
+no coincide, la sala rechaza la consola). La sala n (1 a 10) es el puerto
+UDP `24872 + n - 1`, sin contraseña — lo mismo en Android, o no se ven.
+`MULTIEMU_ROOM_SERVER` dice dónde está; vacío esconde la opción.
+
+Para probarlo en una sola PC:
+
+    cmake -S third_party/azahar -B third_party/azahar/build-room -A x64 -DENABLE_LIBRETRO=OFF -DENABLE_QT=OFF -DENABLE_SDL2=OFF -DENABLE_TESTS=OFF -DENABLE_ROOM=ON -DENABLE_ROOM_STANDALONE=ON -DENABLE_WEB_SERVICE=OFF -DENABLE_VULKAN=OFF -DENABLE_LTO=OFF -DCITRA_WARNINGS_AS_ERRORS=OFF -DCITRA_USE_PRECOMPILED_HEADERS=OFF
+    cmake --build third_party/azahar/build-room --config Release --target citra_room_standalone -- -m
+    third_party/azahar/build-room/bin/Release/azahar-room.exe --room-name sala-1 --port 24872 --max_members 16
+
+y dos copias de la app con `MULTIEMU_ROOM_SERVER=127.0.0.1`, la segunda con
+`--user-data-dir=<otra carpeta>`: con los mismos datos las dos serían la
+misma consola y la sala rechaza la segunda (ConsoleIdCollision).
+
 ### Sin JIT, y por qué
 
 melonDS decide si puede construir su JIT probando `__x86_64__`, que MSVC no

@@ -35,6 +35,15 @@ function argument(name) {
 // Where melonDS keeps its firmware image, which is what makes the DS's own
 // settings outlive a session. Has to be set before any DS instance exists.
 const userDataDir = argument('userdata');
+
+// The Azahar room server that carries a 3DS game's local wireless to
+// another PC or phone over the internet: room n (1 to ROOM_COUNT) is UDP port
+// ROOM_PORT + n - 1 there, the same numbering the Android app uses. The
+// server is Azahar's own dedicated room (citra_room_standalone); see
+// "Inalámbrica de 3DS por internet" in the README. Empty hides the option.
+const ROOM_SERVER = process.env.MULTIEMU_ROOM_SERVER || '';
+const ROOM_PORT = 24872;
+const ROOM_COUNT = 10;
 if (userDataDir) {
   fs.mkdirSync(userDataDir, { recursive: true });
   ds.setLocalDir(userDataDir);
@@ -367,6 +376,12 @@ contextBridge.exposeInMainWorld('emu', {
   // DS only: a GBA game in slot-2, with the same .sav it uses on its own.
   insertGbaCart: (romPath) => core.insertGbaCart(romPath, romPath.replace(/\.[^.]+$/, '.sav')),
   ejectGbaCart: () => core.ejectGbaCart(),
+  // 3DS on its own only: local wireless through a room on ROOM_SERVER.
+  rooms: () => (ROOM_SERVER && core instanceof n3ds.N3ds ? ROOM_COUNT : 0),
+  joinRoom: (room, nickname) => core.joinRoom(ROOM_SERVER, ROOM_PORT + room - 1, nickname, ''),
+  leaveRoom: () => core.leaveRoom(),
+  // { state, error, members }; see N3ds::roomStatus in n3ds_addon.cpp.
+  roomStatus: () => (core && core.roomStatus ? core.roomStatus() : null),
   // Where a slot lives on disk, for the cloud to upload from and download to.
   stateFile,
   // What the pause menu shows: whether this core can take a state at all,

@@ -365,6 +365,7 @@ function stopGame() {
   paused = false;
   currentRom = null;
   linked = false;
+  room = null; // closing the console leaves the room with it
   emu.close();
   // With the core closed nothing is writing to a 3DS game's save, so this is
   // the one moment its last changes can go up safely.
@@ -470,6 +471,7 @@ function refreshPauseMenu() {
     ? `Cartucho GBA: ${gbaCartName}`
     : 'Cartucho GBA: ninguno';
   document.getElementById('gba-cart-eject').disabled = !gbaCartName;
+  refreshRoomRow();
   document.getElementById('speed').value = String(speed);
   document.getElementById('speed-note').hidden = speed === 1;
   document.getElementById('fps').textContent = measuredFps
@@ -505,6 +507,80 @@ document.getElementById('gba-cart-eject').addEventListener('click', () => {
   refreshPauseMenu();
 });
 
+
+// ---- 3DS local wireless over the internet ------------------------------
+//
+// One console here, the other on another PC or phone, both in the same room
+// on the room server (ROOM_SERVER in preload.js). Joining and dropping out
+// happen on the room's own threads, so the status is polled.
+let room = null; // the room number joined or being joined
+let roomJoined = false;
+
+// Network::RoomMember::Error, in order.
+const ROOM_ERRORS = [
+  'Se perdió la conexión con la sala',
+  'La sala te sacó',
+  'No se pudo conectar a la sala',
+  'Ya hay alguien con ese nombre en la sala',
+  'Otra consola de la sala tiene la misma dirección',
+  'Otra consola de la sala tiene el mismo ID de consola',
+  'La sala usa otra versión de Azahar',
+  'La contraseña de la sala no es esa',
+  'La sala no responde',
+  'La sala está llena',
+  'Esta consola está vetada en la sala',
+];
+
+function refreshRoomRow() {
+  const count = emu.rooms();
+  document.getElementById('net-room').hidden = !count;
+  if (!count) return;
+  const select = document.getElementById('net-room-number');
+  if (select.options.length !== count) {
+    select.replaceChildren(...Array.from({ length: count }, (_, i) => new Option(`Sala ${i + 1}`, String(i + 1))));
+  }
+  const status = room && emu.roomStatus();
+  document.getElementById('net-room-status').textContent = !room
+    ? 'Sin conectar'
+    : roomJoined
+      ? `En la sala ${room} · ${status.members} ${status.members === 1 ? 'consola' : 'consolas'}`
+      : `Conectando a la sala ${room}…`;
+  select.disabled = Boolean(room);
+  if (room) select.value = String(room);
+  document.getElementById('net-room-join').hidden = Boolean(room);
+  document.getElementById('net-room-leave').hidden = !room;
+}
+
+document.getElementById('net-room-join').addEventListener('click', () => {
+  room = Number(document.getElementById('net-room-number').value);
+  roomJoined = false;
+  // The room only needs it unique; the games show their own trainer names.
+  emu.joinRoom(room, `multiemu-${Math.random().toString(16).slice(2, 8)}`);
+  refreshRoomRow();
+});
+
+document.getElementById('net-room-leave').addEventListener('click', () => {
+  emu.leaveRoom();
+  room = null;
+  refreshRoomRow();
+});
+
+setInterval(() => {
+  if (!room) return;
+  const status = emu.roomStatus();
+  if (!status) return;
+  const joined = status.state === 3 || status.state === 4;
+  if (joined !== roomJoined) {
+    roomJoined = joined;
+    if (joined) toast(`Conectado a la sala ${room}`);
+  }
+  if (!joined && status.error >= 0) {
+    toast(ROOM_ERRORS[status.error] || 'No se pudo conectar a la sala');
+    room = null;
+    roomJoined = false;
+  }
+  if (paused) refreshRoomRow();
+}, 1000);
 
 document.getElementById('speed').addEventListener('change', (event) => {
   setSpeed(Number(event.target.value));

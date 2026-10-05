@@ -1,18 +1,19 @@
 diff --git a/src/citra_libretro/citra_libretro.cpp b/src/citra_libretro/citra_libretro.cpp
-index 8a65f9d..05992dd 100644
+index 8a65f9d..3c99293 100644
 --- a/src/citra_libretro/citra_libretro.cpp
 +++ b/src/citra_libretro/citra_libretro.cpp
-@@ -49,6 +49,9 @@
+@@ -49,6 +49,10 @@
  #include "core/hle/kernel/process.h"
  #include "core/loader/loader.h"
  #include "core/memory.h"
 +#include "core/hle/service/cfg/cfg.h"
 +#include "network/network.h"
 +#include "network/verify_user.h"
++#include <atomic>
  
  #ifdef HAVE_LIBRETRO_VFS
  #include <streams/file_stream_transforms.h>
-@@ -87,6 +90,12 @@ void retro_init() {
+@@ -87,6 +91,12 @@ void retro_init() {
          std::make_shared<Frontend::ImageInterface>());
  
      LibRetro::Input::Init();
@@ -25,7 +26,7 @@ index 8a65f9d..05992dd 100644
  }
  
  void retro_deinit() {
-@@ -95,6 +104,7 @@ void retro_deinit() {
+@@ -95,6 +105,7 @@ void retro_deinit() {
          Core::System::GetInstance().Shutdown();
      }
  
@@ -33,18 +34,19 @@ index 8a65f9d..05992dd 100644
      LibRetro::Input::Shutdown();
  
      delete emu_instance;
-@@ -750,3 +760,40 @@ size_t retro_get_memory_size(unsigned id) {
+@@ -750,3 +761,64 @@ size_t retro_get_memory_size(unsigned id) {
  void retro_cheat_reset() {}
  
  void retro_cheat_set(unsigned index, bool enabled, const char* code) {}
 +
-+// ---- multiemu patch: local wireless between two consoles -------------------
++// ---- multiemu patch: local wireless over Azahar's rooms --------------------
 +//
-+// Two 3DS consoles in one process, each a copy of this DLL with its own
-+// globals. The first hosts a room on the loopback and joins it, the second
-+// joins it too, and NWM_UDS -- the 3DS's local wireless -- carries their
-+// packets through it. The same calls Azahar's Android frontend makes
-+// (src/android/app/src/main/jni/multiplayer.cpp); a game must be loaded
++// NWM_UDS -- the 3DS's local wireless -- carries its packets through an
++// Azahar multiplayer room. Two uses: two consoles in one process (each a copy
++// of this DLL with its own globals; the first hosts a room on the loopback and
++// both join it), and one console joining a room server somewhere else, to
++// play with another PC or phone. The same calls Azahar's Android frontend
++// makes (src/android/app/src/main/jni/multiplayer.cpp); a game must be loaded
 +// first, since joining identifies the console by its ID.
 +
 +// Opens the room. False if it could not be bound (the port in use).
@@ -54,11 +56,34 @@ index 8a65f9d..05992dd 100644
 +                                0, std::make_unique<Network::VerifyUser::NullBackend>(), {});
 +}
 +
-+// Starts joining; the outcome shows up in multiemu_room_state.
-+extern "C" RETRO_API void multiemu_room_join(unsigned port, const char* nickname) {
++// Why the last join failed or the connection dropped, as a
++// Network::RoomMember::Error; -1 when nothing has gone wrong since joining.
++static std::atomic<int> multiemu_room_last_error{-1};
++
++// Starts joining the room at host:port; the outcome shows up in
++// multiemu_room_state and multiemu_room_error. host may be a name.
++extern "C" RETRO_API void multiemu_room_join(const char* host, unsigned port, const char* nickname,
++                                             const char* password) {
++    static Network::RoomMember::CallbackHandle<Network::RoomMember::Error> on_error;
 +    if (auto member = Network::GetRoomMember().lock()) {
-+        member->Join(nickname, Service::CFG::GetConsoleIdHash(Core::System::GetInstance()),
-+                     "127.0.0.1", static_cast<u16>(port), 0, Network::NoPreferredMac, "");
++        if (!on_error) {
++            on_error = member->BindOnError([](const Network::RoomMember::Error& error) {
++                multiemu_room_last_error = static_cast<int>(error);
++            });
++        }
++        multiemu_room_last_error = -1;
++        member->Join(nickname, Service::CFG::GetConsoleIdHash(Core::System::GetInstance()), host,
++                     static_cast<u16>(port), 0, Network::NoPreferredMac, password ? password : "");
++    }
++}
++
++extern "C" RETRO_API int multiemu_room_error() {
++    return multiemu_room_last_error;
++}
++
++extern "C" RETRO_API void multiemu_room_leave() {
++    if (auto member = Network::GetRoomMember().lock()) {
++        member->Leave();
 +    }
 +}
 +
