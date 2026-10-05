@@ -73,7 +73,11 @@
     white-space: nowrap; /* a narrow window wraps whole buttons, not their words */
   }
   button:hover { background: #343434; }
-  button.primary { background: #2f6f4f; border-color: #3d8a63; }
+  /* The accent is Android's blue (HomeScreen.tsx): #2f5f8f on the main
+     button, #4a90d9 for focus. */
+  button.primary { background: #2f5f8f; border-color: #3d73a8; }
+  button.primary:hover { background: #366a9e; }
+  :focus-visible { outline: 2px solid #4a90d9; outline-offset: 1px; }
   button:disabled { opacity: 0.5; cursor: default; }
 
   input, select {
@@ -254,8 +258,8 @@
   <div class="row" style="justify-content: center">
     <button id="open" class="primary">Abrir ROM</button>
     <button id="folder-pick">Elegir carpeta</button>
-    <button id="browse">Descargar juegos</button>
-    <button id="link-open" title="Dos juegos conectados, para intercambiar o combatir: cable link de Game Boy y GBA, inalámbrica de DS">2 jugadores</button>
+    <button id="browse">HackRoms y Archivos</button>
+    <button id="link-open" title="Dos juegos conectados, para intercambiar o combatir: cable link de Game Boy y GBA, inalámbrica de DS">Link local</button>
   </div>
   <div class="row" style="justify-content: center">
     <button id="account-open">Cuenta</button>

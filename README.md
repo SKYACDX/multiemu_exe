@@ -151,7 +151,7 @@ v1.8 de Android.
 
 La inalámbrica local del 3DS (NWM_UDS) va por las salas de Azahar: cada
 consola entra a una sala y el juego ve a las demás como si estuvieran al
-lado. Las dos consolas de "2 jugadores" usan una sala en el loopback que
+lado. Las dos consolas de "Link local" usan una sala en el loopback que
 aloja la primera; el modo de un jugador entra a una sala de un servidor
 para jugar con otra PC o con la app de Android (menú de pausa →
 "Inalámbrica por internet").

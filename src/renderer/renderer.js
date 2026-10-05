@@ -602,9 +602,9 @@ document.getElementById('open').addEventListener('click', async () => {
 });
 
 document.getElementById('link-open').addEventListener('click', async () => {
-  const first = await emu.pickRom('2 jugadores: juego del jugador 1');
+  const first = await emu.pickRom('Link local: juego del jugador 1');
   if (!first) return;
-  const second = await emu.pickRom('2 jugadores: juego del jugador 2');
+  const second = await emu.pickRom('Link local: juego del jugador 2');
   if (second) openRomFile(first, second);
 });
 
