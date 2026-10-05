@@ -51,6 +51,33 @@ function coverImage(file) {
   return image;
 }
 
+// ---- Names ------------------------------------------------------------
+//
+// A file name tidied up -- "4833 - Pokemon - Edicion Plata SoulSilver
+// (Spain).nds" reads "Pokemon - Edicion Plata SoulSilver" -- and then, for
+// a DS or 3DS game, replaced by the name the game gives itself
+// (hub:rom-title), queued behind the covers the same way.
+function tidyName(romPath) {
+  return fileName(romPath)
+    .replace(/\.[^.]+$/, '')
+    .replace(/^\d+\s+-\s+/, '')
+    .replace(/\s*[([][^)\]]*[)\]]/g, '')
+    .trim();
+}
+
+function gameName(romPath) {
+  const name = element('strong', tidyName(romPath));
+  coverQueue = coverQueue.then(async () => {
+    try {
+      const title = await hub.romTitle(romPath);
+      if (title) name.textContent = title;
+    } catch {
+      // The tidied file name stays.
+    }
+  });
+  return name;
+}
+
 // ---- Recents ----------------------------------------------------------
 
 function recentRoms() {
@@ -90,8 +117,8 @@ function recentCard(romPath, size) {
   card.append(
     top,
     coverImage(romPath),
-    element('strong', fileName(romPath).replace(/\.[^.]+$/, '')),
-    element('span', megabytes(size), 'muted'),
+    gameName(romPath),
+    element('span', fileSizeText(size), 'muted'),
   );
   card.addEventListener('click', () => playRom(romPath));
   return card;
@@ -134,7 +161,8 @@ function openFolder() {
   list.replaceChildren(...(files || []).map((file) => {
     const row = document.createElement('li');
     const title = element('div', undefined, 'title');
-    title.append(element('strong', file.name), element('span', megabytes(file.size)));
+    title.append(gameName(file.path), element('span', fileSizeText(file.size)));
+    title.title = file.name;
     const play = element('button', 'Jugar', 'primary');
     play.addEventListener('click', () => openRomFile(file.path));
     row.append(coverImage(file.path), title, play);
@@ -142,7 +170,7 @@ function openFolder() {
   }));
   document.getElementById('folder-status').textContent = !files
     ? 'No se pudo abrir la carpeta. ¿La moviste o la borraste?'
-    : files.length ? '' : 'No se encontraron ROMs (.gb/.gbc/.gba/.nds/.zip) en esta carpeta.';
+    : files.length ? '' : 'No se encontraron ROMs (.gb/.gbc/.gba/.nds/.3ds/.zip) en esta carpeta.';
   show('folder');
 }
 

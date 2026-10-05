@@ -244,7 +244,7 @@ async function dsIcon(romPath, entry) {
 // RGB565 in 8x8 tiles, the pixels of each tile in Morton order (3dbrew,
 // "SMDH"). An encrypted dump's ExeFS is unreadable without the console's
 // keys, so that gives null too.
-async function n3dsIcon(romPath, entry) {
+async function n3dsSmdh(romPath, entry) {
   const outer = await readRomRange(romPath, entry, 0, 0x200);
   const magic = outer.toString('ascii', 0x100, 0x104);
   const ncch = magic === 'NCSD' ? outer.readUInt32LE(0x120) * 0x200 : magic === 'NCCH' ? 0 : -1;
@@ -256,7 +256,14 @@ async function n3dsIcon(romPath, entry) {
   for (let i = 0; i < 10; i++) {
     if (files.toString('ascii', i * 16, i * 16 + 8).replace(/\0+$/, '') !== 'icon') continue;
     const smdh = await readRomRange(romPath, entry, exefs + 0x200 + files.readUInt32LE(i * 16 + 8), 0x36c0);
-    if (smdh.toString('ascii', 0, 4) !== 'SMDH') return null;
+    return smdh.toString('ascii', 0, 4) === 'SMDH' ? smdh : null;
+  }
+  return null;
+}
+
+async function n3dsIcon(romPath, entry) {
+  const smdh = await n3dsSmdh(romPath, entry);
+  if (smdh) {
     const rgba = Buffer.alloc(48 * 48 * 4);
     for (let tile = 0; tile < 36; tile++) {
       for (let p = 0; p < 64; p++) {
@@ -272,6 +279,39 @@ async function n3dsIcon(romPath, entry) {
       }
     }
     return encodePng(48, 48, rgba);
+  }
+  return null;
+}
+
+// The name a DS or 3DS game gives itself -- the one under its icon on the
+// console -- in Spanish when the game has it, else in English; null when
+// there is none (GB/GBA headers only carry a short uppercase code). Both are
+// UTF-16 per language, Spanish being language 5 and English 1. A DS banner
+// has one block of up to three lines, the last the publisher, from 0x240
+// (GBATEK, "DS Cartridge Icon/Title"); a 3DS SMDH has a short title in the
+// first 0x80 bytes of each 0x200 from 0x8 (3dbrew, "SMDH").
+const utf16 = (bytes) => bytes.toString('utf16le').replace(/\0[\s\S]*$/, '').trim();
+
+async function dsTitle(romPath, entry) {
+  const header = await readRomRange(romPath, entry, 0, 0x200);
+  const banner = header.readUInt32LE(0x68);
+  if (!banner) return null;
+  const titles = await readRomRange(romPath, entry, banner + 0x240, 6 * 0x100);
+  for (const language of [5, 1]) {
+    if (titles.length < (language + 1) * 0x100) continue;
+    const lines = utf16(titles.subarray(language * 0x100, (language + 1) * 0x100)).split('\n');
+    const name = (lines.length > 1 ? lines.slice(0, -1) : lines).join(' ').replace(/\s+/g, ' ').trim();
+    if (name) return name;
+  }
+  return null;
+}
+
+async function n3dsTitle(romPath, entry) {
+  const smdh = await n3dsSmdh(romPath, entry);
+  if (!smdh) return null;
+  for (const language of [5, 1]) {
+    const name = utf16(smdh.subarray(0x8 + language * 0x200, 0x8 + language * 0x200 + 0x80));
+    if (name) return name.replace(/\s+/g, ' ');
   }
   return null;
 }
@@ -387,8 +427,25 @@ function removeUpdateInstallers() {
   }
 }
 
+function forgetToken() {
+  token = null;
+  username = null;
+  fs.rmSync(tokenFile(), { force: true });
+}
+
 function register() {
   restoreToken();
+
+  // The server stopped accepting the saved session (closed from the website,
+  // a password change, or it expired): the shared client reports it on any
+  // 401 sent with a token. Forget it here and let the page tell the user --
+  // every sync swallows its errors, so otherwise the cloud just quietly
+  // stops, the way it did before Android 1.15 added this.
+  shared.setSessionRejectedHandler(() => {
+    if (!token) return; // once, not once per call still in flight
+    forgetToken();
+    for (const win of BrowserWindow.getAllWindows()) win.webContents.send('hub:session-rejected');
+  });
   removeUpdateInstallers();
 
   ipcMain.handle('hub:files', (event, params) => shared.listFiles(params));
@@ -454,6 +511,29 @@ function register() {
     const screen = userFile('covers', `${pictureKey(played)}-screen.png`);
     if (!fs.existsSync(screen)) return null;
     return `data:image/png;base64,${fs.readFileSync(screen).toString('base64')}`;
+  });
+  // dsTitle/n3dsTitle, kept beside the icon so the menu reads each ROM once.
+  // An empty file records "this one has none".
+  ipcMain.handle('hub:rom-title', async (event, romPath) => {
+    let entry;
+    try {
+      entry = romEntry(romPath);
+    } catch {
+      return null;
+    }
+    const is3ds = entry && ['3ds', 'cci', 'cxi'].includes(entry.extension);
+    if (!entry || (!is3ds && entry.extension !== 'nds')) return null;
+    const cached = userFile('covers', `${pictureKey(romPath)}-title.txt`);
+    if (!fs.existsSync(cached)) {
+      let title = null;
+      try {
+        title = await (is3ds ? n3dsTitle(romPath, entry) : dsTitle(romPath, entry));
+      } catch {
+        return null;
+      }
+      fs.writeFileSync(cached, title || '');
+    }
+    return fs.readFileSync(cached, 'utf8') || null;
   });
   ipcMain.handle('hub:platforms', () => shared.listPlatforms());
 
@@ -587,11 +667,7 @@ function register() {
     return { username };
   });
 
-  ipcMain.handle('hub:logout', () => {
-    token = null;
-    username = null;
-    fs.rmSync(tokenFile(), { force: true });
-  });
+  ipcMain.handle('hub:logout', forgetToken);
 
   ipcMain.handle('hub:saves', () => shared.listCloudSaves(requireToken()));
 

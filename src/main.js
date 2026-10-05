@@ -65,12 +65,30 @@ ipcMain.handle('fit-window', (event, { width, height }) => {
   win.center();
 });
 
+// The menus' own size, for the first window and for coming back from a game:
+// a game's window is its screen's shape (a DS stacked is narrow and tall),
+// and the menu laid out in that wraps its buttons and hides Recientes below
+// the fold. Shrunk to fit a small desktop.
+const MENU_SIZE = { width: 880, height: 720 };
+
+function menuSize(win) {
+  const room = screen.getDisplayMatching(win.getBounds()).workAreaSize;
+  return [Math.min(MENU_SIZE.width, Math.floor(room.width * 0.9)), Math.min(MENU_SIZE.height, Math.floor(room.height * 0.9))];
+}
+
+ipcMain.handle('menu-window', (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (!win) return;
+  win.setContentSize(...menuSize(win));
+  win.center();
+});
+
 app.whenReady().then(() => {
   hub.register();
 
   const win = new BrowserWindow({
-    width: 240 * 3,
-    height: 160 * 3,
+    ...MENU_SIZE,
+    useContentSize: true,
     backgroundColor: '#101010',
     autoHideMenuBar: true, // Electron's default File/Edit/View menu is dead weight here
     webPreferences: {
@@ -87,6 +105,8 @@ app.whenReady().then(() => {
       ],
     },
   });
+  win.setContentSize(...menuSize(win));
+  win.center();
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 });
 

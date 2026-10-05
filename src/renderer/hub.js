@@ -114,8 +114,14 @@ function element(tag, text, className) {
   return node;
 }
 
-function megabytes(bytes) {
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+// "2 GB", "16 MB", "65 KB": the largest unit with a whole number in front,
+// with a decimal comma like the rest of the app.
+const sizeNumber = new Intl.NumberFormat('es', { maximumFractionDigits: 1 });
+function fileSizeText(bytes) {
+  for (const [unit, size] of [['GB', 1024 ** 3], ['MB', 1024 ** 2], ['KB', 1024]]) {
+    if (bytes >= size) return `${sizeNumber.format(bytes / size)} ${unit}`;
+  }
+  return `${bytes} B`;
 }
 
 async function loadPlatforms() {
@@ -146,7 +152,7 @@ async function loadFiles() {
       limit: 50,
     }));
   } catch (error) {
-    browserStatus.textContent = error.message;
+    browserStatus.textContent = ipcErrorMessage(error);
     return;
   }
   // A slower earlier search must not overwrite a newer one's results.
@@ -174,7 +180,7 @@ function fileRow(file) {
   const title = element('div', undefined, 'title');
   title.append(
     element('strong', file.title),
-    element('span', [file.platform?.name, megabytes(file.fileSize)].filter(Boolean).join(' · ')),
+    element('span', [file.platform?.name, fileSizeText(file.fileSize)].filter(Boolean).join(' · ')),
   );
 
   const play = element('button', 'Descargar y jugar');
@@ -185,7 +191,7 @@ function fileRow(file) {
     try {
       playRom(await hub.download(file));
     } catch (error) {
-      browserStatus.textContent = error.message;
+      browserStatus.textContent = ipcErrorMessage(error);
       play.disabled = false;
       play.textContent = 'Descargar y jugar';
     }
@@ -220,7 +226,36 @@ let pendingToken = null;
 // Kept here so the pause menu can offer cloud buttons without asking the
 // main process every time it opens.
 let signedIn = false;
-hub.account().then((account) => (signedIn = Boolean(account)));
+hub.account().then((account) => {
+  signedIn = Boolean(account);
+  // Android's check at start-up: a session that died while the app was
+  // closed is found now, not at the first sync that fails.
+  if (account) hub.saves().catch(() => {});
+});
+
+// Android's alert, word for word but "este equipo" (romHackHubAccount.ts,
+// setSessionRejectedHandler). The main process has already forgotten the
+// session; this puts the account screen back to signed out.
+hub.onSessionRejected(async () => {
+  signedIn = false;
+  session.hidden = true;
+  loginForm.hidden = false;
+  totpForm.hidden = true;
+  cloudSaves.replaceChildren();
+  accountStatus.textContent = '';
+  const choice = await hub.ask({
+    title: 'Tu sesión se cerró',
+    message:
+      'RomHack Hub ya no reconoce la sesión de este equipo (se cerró desde la web, cambiaste la ' +
+      'contraseña o caducó). Tus guardados no se están sincronizando con la nube. Vuelve a ' +
+      'iniciar sesión para seguir.',
+    buttons: ['Iniciar sesión', 'Ahora no'],
+  });
+  if (choice === 0) {
+    pauseGame(); // nothing without a game running
+    document.getElementById('account-open').click();
+  }
+});
 
 function showSession(username) {
   signedIn = true;
@@ -237,7 +272,7 @@ async function loadCloudSaves() {
   try {
     saves = await hub.saves();
   } catch (error) {
-    accountStatus.textContent = error.message;
+    accountStatus.textContent = ipcErrorMessage(error);
     return;
   }
 
@@ -278,7 +313,7 @@ function saveRow(save) {
   const title = element('div', undefined, 'title');
   title.append(
     element('strong', slotLabel(save.slot)),
-    element('span', `${megabytes(save.fileSize)} · ${new Date(save.updatedAt).toLocaleString()}`),
+    element('span', `${fileSizeText(save.fileSize)} · ${new Date(save.updatedAt).toLocaleString()}`),
   );
 
   const download = element('button', 'Traer');
@@ -343,7 +378,7 @@ loginForm.addEventListener('submit', async (event) => {
     accountStatus.textContent = '';
     showSession(result.username);
   } catch (error) {
-    accountStatus.textContent = error.message;
+    accountStatus.textContent = ipcErrorMessage(error);
   }
 });
 
@@ -357,7 +392,7 @@ totpForm.addEventListener('submit', async (event) => {
     accountStatus.textContent = '';
     showSession(username);
   } catch (error) {
-    accountStatus.textContent = error.message;
+    accountStatus.textContent = ipcErrorMessage(error);
   }
 });
 

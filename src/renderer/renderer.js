@@ -295,7 +295,7 @@ function startRom(romPath, partnerRom) {
   try {
     size = partnerRom ? emu.openLink(romPath, partnerRom) : emu.open(romPath);
   } catch (error) {
-    status.textContent = error.message;
+    status.textContent = ipcErrorMessage(error);
     return;
   }
   currentRom = romPath;
@@ -376,6 +376,7 @@ function stopGame() {
   presentFrame();
   showRecents(); // with the screen just kept
   show('picker');
+  emu.menuWindow();
 }
 
 // Closing the window mid-game keeps the last screen too.

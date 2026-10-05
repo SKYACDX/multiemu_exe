@@ -294,6 +294,7 @@ contextBridge.exposeInMainWorld('hub', {
   openDownload: () => ipcRenderer.invoke('hub:open-download'),
   installUpdate: () => ipcRenderer.invoke('hub:update-install'),
   onUpdateProgress: (callback) => ipcRenderer.on('hub:update-progress', (event, percent) => callback(percent)),
+  onSessionRejected: (callback) => ipcRenderer.on('hub:session-rejected', () => callback()),
   notifyUpdate: (version) => ipcRenderer.invoke('hub:notify-update', version),
   account: () => ipcRenderer.invoke('hub:account'),
   login: (credentials) => ipcRenderer.invoke('hub:login', credentials),
@@ -307,6 +308,7 @@ contextBridge.exposeInMainWorld('hub', {
   saveStatus: (params) => ipcRenderer.invoke('hub:save-status', params),
   unpackRom: (filePath) => ipcRenderer.invoke('hub:unpack-rom', filePath),
   romCover: (romPath) => ipcRenderer.invoke('hub:rom-cover', romPath),
+  romTitle: (romPath) => ipcRenderer.invoke('hub:rom-title', romPath),
   sendFeedback: (report) => ipcRenderer.invoke('hub:feedback', report),
   syncSave: (params) => ipcRenderer.invoke('hub:save-sync', params),
   ask: (question) => ipcRenderer.invoke('hub:ask', question),
@@ -352,6 +354,7 @@ contextBridge.exposeInMainWorld('emu', {
   // Size in bytes, or null for a file that is no longer there.
   fileSize: (file) => (fs.existsSync(file) ? fs.statSync(file).size : null),
   fitWindow: (size) => ipcRenderer.invoke('fit-window', size),
+  menuWindow: () => ipcRenderer.invoke('menu-window'),
   runFrame: () => {
     ranSinceAutosave = true;
     return core.runFrame();

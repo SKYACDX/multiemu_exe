@@ -58,6 +58,7 @@
     gap: 12px;
   }
   #picker { text-align: center; }
+  #picker .row { flex-wrap: wrap; }
   h1 { font-size: 20px; font-weight: 600; margin: 0; }
   .muted { color: #8a8a8a; margin: 0; }
 
@@ -69,6 +70,7 @@
     border: 1px solid #3d3d3d;
     border-radius: 6px;
     cursor: pointer;
+    white-space: nowrap; /* a narrow window wraps whole buttons, not their words */
   }
   button:hover { background: #343434; }
   button.primary { background: #2f6f4f; border-color: #3d8a63; }
