@@ -41,6 +41,13 @@ jobs:
 
       - run: npm ci
 
+      # A release tag has to match the version inside the installer.
+      - name: Check tag matches package.json
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          $v = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ("v$v" -ne "${{ github.ref_name }}") { "::error::tag ${{ github.ref_name }} != package.json v$v"; exit 1 }
+
       # vendor:melonds applies patches with `git am`, which wants an identity.
       - run: |
           git config --global user.name "multiemu CI"
@@ -79,8 +86,27 @@ jobs:
       - name: Build installer
         run: npx electron-builder --win --publish never
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: multiemu-windows
           path: dist/*.exe
           if-no-files-found: error
+
+  # On a v* tag, the installer CI just built becomes a public GitHub Release.
+  # That file, not a local build, is what gets published to RomHack Hub, so
+  # every published binary maps to a tagged commit (GPL source, and what
+  # SignPath will sign). Its own job so only this step can write to the repo.
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: multiemu-windows
+          path: dist
+      - run: gh release create "$GITHUB_REF_NAME" dist/*.exe --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
