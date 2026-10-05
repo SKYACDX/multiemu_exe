@@ -1,0 +1,11 @@
+name: Feature request / Petición
+description: An idea to make multiemu better. / Una idea para mejorar multiemu.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like / Qué te gustaría
+      description: What you want to do and why; how it works on Android, if it already exists there. / Qué quieres hacer y para qué; cómo funciona en Android, si ya existe ahí.
+    validations:
+      required: true

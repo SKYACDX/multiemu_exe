@@ -1,0 +1,45 @@
+name: Bug report / Reportar un fallo
+description: Something doesn't work as it should. / Algo no funciona como debería.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please don't attach or link game ROMs. / Por favor, no adjuntes ni enlaces ROMs de juegos.
+  - type: input
+    id: version
+    attributes:
+      label: multiemu version / Versión de multiemu
+      description: Shown in the update bar, or the installer's file name. / En la barra de actualización o en el nombre del instalador.
+      placeholder: "1.15"
+    validations:
+      required: true
+  - type: dropdown
+    id: system
+    attributes:
+      label: System / Consola
+      options:
+        - Game Boy / Game Boy Color
+        - Game Boy Advance
+        - Nintendo DS
+        - Nintendo 3DS
+        - Not game-specific / No es de un juego
+    validations:
+      required: true
+  - type: input
+    id: game
+    attributes:
+      label: Game / Juego
+      description: Name and region, if it happens with a specific game. / Nombre y región, si pasa con un juego concreto.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened / Qué pasó
+      description: What you did, what you expected and what happened instead. / Qué hiciste, qué esperabas y qué pasó.
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version / Versión de Windows
+      placeholder: Windows 11 24H2
