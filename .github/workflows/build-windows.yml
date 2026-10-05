@@ -1,0 +1,68 @@
+# Builds the Windows installer from source, the same steps as the README.
+# This is the build SignPath Foundation signs: the signed .exe has to come
+# straight from the code in this repo, not from someone's machine.
+#
+# ponytail: no cache, every run recompiles the three emulators (Azahar is
+# most of the ~1 h). Add actions/cache on third_party/*/build-win if it hurts.
+name: build-windows
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # vendor:melonds applies patches with `git am`, which wants an identity.
+      - run: |
+          git config --global user.name "multiemu CI"
+          git config --global user.email "ci@users.noreply.github.com"
+
+      - name: Fetch emulators (pinned tags + our patches)
+        run: |
+          npm run vendor:mgba
+          npm run vendor:melonds
+          npm run vendor:azahar
+
+      # Through npm (cmd), never bash: Git Bash turns MSBuild's `/m` into a path.
+      - name: Build emulators
+        run: |
+          npm run build:mgba
+          npm run build:melonds
+          npm run build:slirp
+          npm run build:azahar
+
+      - name: Build addons
+        run: npm run build
+
+      # GB, GBA and DS without external ROMs: catches a broken addon before packaging.
+      - name: Smoke test
+        run: npx electron test/smoke.js
+        env:
+          ELECTRON_RUN_AS_NODE: '1'
+
+      - name: Build installer
+        run: npx electron-builder --win --publish never
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: multiemu-windows
+          path: dist/*.exe
+          if-no-files-found: error
