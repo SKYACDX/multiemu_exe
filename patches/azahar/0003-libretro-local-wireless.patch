@@ -1,15 +1,15 @@
 diff --git a/src/citra_libretro/citra_libretro.cpp b/src/citra_libretro/citra_libretro.cpp
-index 8a65f9d..3c99293 100644
+index 8a65f9d..fbb582f 100644
 --- a/src/citra_libretro/citra_libretro.cpp
 +++ b/src/citra_libretro/citra_libretro.cpp
 @@ -49,6 +49,10 @@
  #include "core/hle/kernel/process.h"
  #include "core/loader/loader.h"
  #include "core/memory.h"
-+#include "core/hle/service/cfg/cfg.h"
 +#include "network/network.h"
 +#include "network/verify_user.h"
 +#include <atomic>
++#include <random>
  
  #ifdef HAVE_LIBRETRO_VFS
  #include <streams/file_stream_transforms.h>
@@ -34,7 +34,7 @@ index 8a65f9d..3c99293 100644
      LibRetro::Input::Shutdown();
  
      delete emu_instance;
-@@ -750,3 +761,64 @@ size_t retro_get_memory_size(unsigned id) {
+@@ -750,3 +761,80 @@ size_t retro_get_memory_size(unsigned id) {
  void retro_cheat_reset() {}
  
  void retro_cheat_set(unsigned index, bool enabled, const char* code) {}
@@ -46,8 +46,8 @@ index 8a65f9d..3c99293 100644
 +// of this DLL with its own globals; the first hosts a room on the loopback and
 +// both join it), and one console joining a room server somewhere else, to
 +// play with another PC or phone. The same calls Azahar's Android frontend
-+// makes (src/android/app/src/main/jni/multiplayer.cpp); a game must be loaded
-+// first, since joining identifies the console by its ID.
++// makes (src/android/app/src/main/jni/multiplayer.cpp), with one change:
++// see multiemu_room_join.
 +
 +// Opens the room. False if it could not be bound (the port in use).
 +extern "C" RETRO_API bool multiemu_room_host(unsigned port) {
@@ -62,18 +62,34 @@ index 8a65f9d..3c99293 100644
 +
 +// Starts joining the room at host:port; the outcome shows up in
 +// multiemu_room_state and multiemu_room_error. host may be a name.
++//
++// Azahar's frontends send Service::CFG::GetConsoleIdHash, a hash of the
++// emulated console's unique ID: the same value every time, for as long as
++// that NAND exists, so a room server could tell a player apart across
++// sessions. A room only compares it against the others in the room, to
++// refuse the same console twice, so this sends a new random one per join
++// instead -- which also means two copies of one console are no longer
++// refused. The game sees nothing of it; it gets its MAC from the room.
 +extern "C" RETRO_API void multiemu_room_join(const char* host, unsigned port, const char* nickname,
 +                                             const char* password) {
-+    static Network::RoomMember::CallbackHandle<Network::RoomMember::Error> on_error;
++    // Bound once per RoomMember: each retro_init makes a new one, and where
++    // the core stays loaded between games (Android) the old one is gone.
++    static std::weak_ptr<Network::RoomMember> bound;
 +    if (auto member = Network::GetRoomMember().lock()) {
-+        if (!on_error) {
-+            on_error = member->BindOnError([](const Network::RoomMember::Error& error) {
++        if (bound.lock() != member) {
++            bound = member;
++            member->BindOnError([](const Network::RoomMember::Error& error) {
 +                multiemu_room_last_error = static_cast<int>(error);
 +            });
 +        }
 +        multiemu_room_last_error = -1;
-+        member->Join(nickname, Service::CFG::GetConsoleIdHash(Core::System::GetInstance()), host,
-+                     static_cast<u16>(port), 0, Network::NoPreferredMac, password ? password : "");
++        std::random_device random;
++        std::string console_id_hash;
++        for (int i = 0; i < 8; i++) {
++            console_id_hash += fmt::format("{:08x}", random());
++        }
++        member->Join(nickname, console_id_hash, host, static_cast<u16>(port), 0,
++                     Network::NoPreferredMac, password ? password : "");
 +    }
 +}
 +
