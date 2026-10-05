@@ -419,10 +419,7 @@ window.addEventListener('keydown', (event) => {
 // Subir/Bajar -- see uploadState and downloadState in hub.js.
 function stateSlotRow(slot, savedAt) {
   const auto = slot === AUTO_STATE_SLOT;
-  // A 3DS state is far over the 20MB the cloud takes per file, so only that
-  // game's own save is synced -- see src/save3ds.js.
-  const cloudStates = signedIn && !is3ds(currentRom);
-  const cloud = !auto && cloudStates ? cloudSaveIn(slot) : null;
+  const cloud = !auto && signedIn ? cloudSaveIn(slot) : null;
   const row = element('div', undefined, 'row slot');
   const label = element('div', undefined, 'title');
   label.append(
@@ -446,7 +443,7 @@ function stateSlotRow(slot, savedAt) {
   button(slot === 0 ? 'Cargar (F8)' : 'Cargar', () => {
     if (saveOrLoadState(false, slot)) resumeGame();
   }, !savedAt);
-  if (!auto && cloudStates) {
+  if (!auto && signedIn) {
     button('Subir', () => uploadState(slot));
     button('Bajar', () => downloadState(slot), !cloud);
   }
