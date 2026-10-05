@@ -26,11 +26,11 @@ jobs:
       # mGBA asks for 3.1 and Azahar's nihstro for 2.6. Locally it's CMake 3.28.
       CMAKE_POLICY_VERSION_MINIMUM: '3.5'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -52,7 +52,16 @@ jobs:
       - run: npm run build:mgba
       - run: npm run build:melonds
       - run: npm run build:slirp
-      - run: npm run build:azahar
+      # Compiler errors become annotations, which are public through the API
+      # even when the raw log needs a login.
+      - name: npm run build:azahar
+        run: |
+          npm run build:azahar 2>&1 | Tee-Object -FilePath azahar-build.log
+          if ($LASTEXITCODE) {
+            Select-String -Path azahar-build.log -Pattern ': (fatal )?error |CMake Error' |
+              Select-Object -First 25 | ForEach-Object { "::error::$($_.Line.Trim())" }
+            exit 1
+          }
 
       - name: Build addons
         run: npm run build
