@@ -453,6 +453,7 @@ assert.strictEqual(
 for (const file of [
   'src/hub.js',
   'src/save3ds.js',
+  'scripts/publish.js',
   'src/main.js',
   'src/preload.js',
   'src/renderer/hub.js',
@@ -470,5 +471,7 @@ for (const file of [
 
 // The 3DS cloud save: pure JS, so it lives in its own file and runs here too.
 require('./save3ds.test.js');
+// The publish script against a fake GitHub and Hub.
+require('./publish.test.js');
 
 console.log('smoke: ok');

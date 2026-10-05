@@ -254,26 +254,41 @@ técnica, y conviene tomarla antes de publicar el primer release.
 
 ### Publicar
 
+El instalador que se publica es siempre el que compila el CI (el workflow
+`build-windows`), nunca uno hecho en una PC: así sale de un commit limpio de
+`origin` y es el mismo binario que firmará SignPath. Para cada versión:
+
+1. Sube `version` y `versionCode` en `package.json`, haz commit y push a `main`.
+2. Crea el tag `vX.Y.Z` sobre ese commit y súbelo
+   (`git tag vX.Y.Z <hash>` y `git push origin vX.Y.Z`). El workflow comprueba
+   que el tag coincide con `package.json`, compila y crea la GitHub Release con
+   el `.exe` adjunto.
+3. Cuando esa Release exista, publícala en RomHack Hub:
+
 ```
-npm run dist
-node scripts/publish.js changelog.txt
+node scripts/publish.js changelog.txt [vX.Y.Z] [--dry-run]
 ```
 
-Las capturas del listing van aparte, y hay que marcarlas o caen en la
-galería de Android:
+El script baja el `.exe` de la Release, comprueba tamaño, SHA-256 (si GitHub lo
+da) y que es un ejecutable, y lo sube al Hub. `--dry-run` hace todo eso sin
+tocar el Hub. Sin tag usa `v<versión de package.json>`. Las capturas del
+listing van aparte, y hay que marcarlas o caen en la galería de Android:
 
 ```
 node scripts/upload-screenshots.js capturas/*.png
 ```
 
-La versión y el `versionCode` salen de `package.json`, que es exactamente lo
-que compila el propio `.exe` (`src/hub.js` lo lee de ahí). Tenerlos en dos
-sitios ya provocó una vez que la app se ofreciera a sí misma como
-actualización, así que **hay que subir `versionCode` antes de construir**,
-no después.
+La versión y el `versionCode` que se publican salen del `package.json` **del
+tag**, que es exactamente lo que el CI compiló dentro del `.exe` (`src/hub.js`
+lo lee de ahí). Tenerlos en dos sitios ya provocó una vez que la app se
+ofreciera a sí misma como actualización, así que **hay que subir
+`versionCode` antes de etiquetar**, no después.
 
 `versionCode` es una secuencia global compartida con Android: 10 fue la
-v1.8 de Android, Windows empezó en 11.
+v1.8 de Android, Windows empezó en 11. Antes de subirlo, mira el máximo vivo
+con la caché saltada (`/api/v1/app/releases?limit=50&_=<timestamp>`): el
+listado se cachea hasta unos 6 minutos y dos sesiones pueden elegir el mismo
+código.
 
 El script reutiliza la release si ese `versionCode` ya existe, así que
 volver a subir un binario corregido no crea un duplicado.
