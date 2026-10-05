@@ -39,9 +39,11 @@ const userDataDir = argument('userdata');
 // The Azahar room server that carries a 3DS game's local wireless to
 // another PC or phone over the internet: room n (1 to ROOM_COUNT) is UDP port
 // ROOM_PORT + n - 1 there, the same numbering the Android app uses. The
-// server is Azahar's own dedicated room (citra_room_standalone); see
-// "Inalámbrica de 3DS por internet" in the README. Empty hides the option.
-const ROOM_SERVER = process.env.MULTIEMU_ROOM_SERVER || '';
+// server is Azahar's own dedicated room (citra_room_standalone) on an
+// Oracle Cloud VM in Querétaro; see "Inalámbrica de 3DS por internet" in the
+// README. MULTIEMU_ROOM_SERVER overrides it for testing; set empty, it hides
+// the option.
+const ROOM_SERVER = process.env.MULTIEMU_ROOM_SERVER ?? '160.34.211.121';
 const ROOM_PORT = 24872;
 const ROOM_COUNT = 10;
 if (userDataDir) {

@@ -160,7 +160,15 @@ El servidor es el de Azahar sin cambios (`citra_room_standalone`, que sale
 como `azahar-room`, del mismo tag que el núcleo: si el `network_version`
 no coincide, la sala rechaza la consola). La sala n (1 a 10) es el puerto
 UDP `24872 + n - 1`, sin contraseña — lo mismo en Android, o no se ven.
-`MULTIEMU_ROOM_SERVER` dice dónde está; vacío esconde la opción.
+El servidor es una VM gratuita de Oracle Cloud en Querétaro
+(`160.34.211.121`, ARM, Ubuntu 24.04), con el `azahar-room` compilado allí
+mismo del tag y una unidad de systemd por sala: `azahar-room@24872` es la
+sala 1, hasta `@24881`. Hay que abrir el rango UDP dos veces: en la
+Security List de la subred en la consola de Oracle y en el iptables de la
+propia VM (las imágenes de Oracle traen un `REJECT` al final; la regla va
+antes y se guarda con `netfilter-persistent save`). `azahar-room` exige
+`--preferred-app`, o sale mostrando la ayuda. `MULTIEMU_ROOM_SERVER` cambia
+la dirección para pruebas; vacío esconde la opción.
 
 Para probarlo en una sola PC:
 
