@@ -10,6 +10,9 @@ on:
   workflow_dispatch:
   push:
     tags: ['v*']
+    # So a change to this file tests itself without a manual run.
+    branches: [main]
+    paths: ['.github/workflows/build-windows.yml']
 
 permissions:
   contents: read
@@ -18,6 +21,10 @@ jobs:
   build:
     runs-on: windows-latest
     timeout-minutes: 180
+    env:
+      # The runner ships CMake 4, which refuses cmake_minimum_required < 3.5;
+      # mGBA asks for 3.1 and Azahar's nihstro for 2.6. Locally it's CMake 3.28.
+      CMAKE_POLICY_VERSION_MINIMUM: '3.5'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -35,19 +42,17 @@ jobs:
           git config --global user.name "multiemu CI"
           git config --global user.email "ci@users.noreply.github.com"
 
-      - name: Fetch emulators (pinned tags + our patches)
-        run: |
-          npm run vendor:mgba
-          npm run vendor:melonds
-          npm run vendor:azahar
+      # One step per script: a multi-line pwsh step only fails on the last
+      # command's exit code, and per-step results show which one broke.
+      - run: npm run vendor:mgba
+      - run: npm run vendor:melonds
+      - run: npm run vendor:azahar
 
       # Through npm (cmd), never bash: Git Bash turns MSBuild's `/m` into a path.
-      - name: Build emulators
-        run: |
-          npm run build:mgba
-          npm run build:melonds
-          npm run build:slirp
-          npm run build:azahar
+      - run: npm run build:mgba
+      - run: npm run build:melonds
+      - run: npm run build:slirp
+      - run: npm run build:azahar
 
       - name: Build addons
         run: npm run build
