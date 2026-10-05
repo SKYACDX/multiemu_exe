@@ -12,7 +12,8 @@ on:
     tags: ['v*']
     # Changes to the build itself test themselves without a manual run.
     branches: [main]
-    paths: ['.github/workflows/build-windows.yml', 'package.json', 'patches/**']
+    # vendor/multiemu: a submodule bump changes core/gb and the melonDS patch.
+    paths: ['.github/workflows/build-windows.yml', 'package.json', 'patches/**', 'vendor/multiemu']
 
 permissions:
   contents: read
