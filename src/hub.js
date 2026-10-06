@@ -16,7 +16,8 @@ const { BrowserWindow, Notification, app, dialog, ipcMain, safeStorage, shell } 
 
 const shared = require('../build/shared.js');
 const save3ds = require('./save3ds');
-const { normalize } = require('./saveNormalizer');
+const { backUpSave, normalize, readCapped } = require('./saveNormalizer');
+const { knownRoms } = require('./knownRoms');
 
 // This build's place in RomHack Hub's versionCode sequence, which is shared
 // across platforms rather than per-platform (see docs/app-listing-api.md in
@@ -39,6 +40,16 @@ function userFile(...parts) {
   fs.mkdirSync(path.dirname(full), { recursive: true });
   return full;
 }
+
+// ---- ROMs the user chose (src/knownRoms.js has the why) --------------------
+let chosen = null;
+const chosenRoms = () => (chosen ??= knownRoms(app.getPath('userData')));
+const rememberRom = (rom) => chosenRoms().rememberRom(rom);
+const rememberFolder = (folder) => chosenRoms().rememberFolder(folder);
+const assertKnownRom = (rom) => chosenRoms().assertKnownRom(rom);
+const assertSaveOf = (rom, save) => chosenRoms().assertSaveOf(rom, save);
+
+const backUp = (name, bytes) => backUpSave(path.dirname(userFile('save-backups', name)), name, bytes);
 
 // ---- Account token ----------------------------------------------------
 //
@@ -397,12 +408,17 @@ function keepRom(name, bytes) {
   const romPath = userFile('roms', path.basename(name));
   if (!fs.existsSync(romPath)) {
     fs.writeFileSync(romPath, bytes);
+    rememberRom(romPath);
     return romPath;
   }
   const view = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  if (fs.readFileSync(romPath).equals(view)) return romPath;
+  if (fs.readFileSync(romPath).equals(view)) {
+    rememberRom(romPath);
+    return romPath;
+  }
   const renamed = romPath.replace(/(\.[^.]+)$/, ` (${zlib.crc32(view).toString(16)})$1`);
   fs.writeFileSync(renamed, view);
+  rememberRom(renamed);
   return renamed;
 }
 
@@ -461,9 +477,7 @@ function replace3dsSave(id, tree, make) {
   const dir = save3ds.dataDir(app.getPath('userData'), id);
   const current = save3ds.readTree(dir);
   const result = make ? make(current) : { tree, warnings: [] };
-  if (save3ds.hasSaveData(current)) {
-    fs.writeFileSync(userFile('save-backups', `3ds-${id}.zip`), save3ds.pack(current));
-  }
+  if (save3ds.hasSaveData(current)) backUp(`3ds-${id}.zip`, save3ds.pack(current));
   save3ds.writeTree(dir, result.tree);
   return result.warnings;
 }
@@ -473,8 +487,7 @@ function replace3dsSave(id, tree, make) {
 // whole into memory, so a size cap first: a save is a few hundred KB.
 const MAX_IMPORT_BYTES = 64 * 1024 * 1024;
 async function import3dsSave(romPath, file) {
-  if (fs.statSync(file).size > MAX_IMPORT_BYTES) throw new Error('Ese archivo es demasiado grande para ser una partida');
-  const incoming = save3ds.unpack(new Uint8Array(fs.readFileSync(file)));
+  const incoming = save3ds.unpack(new Uint8Array(readCapped(file, MAX_IMPORT_BYTES)));
   return replace3dsSave(await n3dsId(romPath), null, (current) => save3ds.importTree(incoming, current));
 }
 
@@ -487,11 +500,10 @@ const MAX_IMPORT_SAVE = 33 * 1024 * 1024; // the largest DS save plus a wrapper
 function importBatterySave(romPath, file) {
   const target = SAVE_TARGET[path.extname(romPath).slice(1).toLowerCase()];
   if (!target) throw new Error('Este juego no tiene un guardado que se pueda importar');
-  if (fs.statSync(file).size > MAX_IMPORT_SAVE) throw new Error('Ese archivo es demasiado grande para ser una partida');
-  const result = normalize(fs.readFileSync(file), target);
+  const result = normalize(readCapped(file, MAX_IMPORT_SAVE), target);
   if (result.error) throw new Error(result.error);
   const sidecar = romPath.replace(/\.[^.]+$/, '.sav');
-  if (fs.existsSync(sidecar)) fs.copyFileSync(sidecar, userFile('save-backups', path.basename(sidecar)));
+  if (fs.existsSync(sidecar)) backUp(path.basename(sidecar), fs.readFileSync(sidecar));
   fs.writeFileSync(`${sidecar}.tmp`, result.bytes);
   fs.renameSync(`${sidecar}.tmp`, sidecar);
   return result.note ? [result.note] : [];
@@ -681,6 +693,7 @@ function register() {
   // downloads, because the save is kept next to the ROM and needs somewhere
   // that stays put. Anything else is a ROM already and comes back as is.
   ipcMain.handle('hub:unpack-rom', (event, filePath) => {
+    assertKnownRom(filePath);
     if (!/\.zip$/i.test(filePath)) return filePath;
     const unpacked = shared.extractFromZip(new Uint8Array(fs.readFileSync(filePath)), ROM_EXTENSIONS);
     if (!unpacked) {
@@ -803,6 +816,8 @@ function register() {
   // bytes, when given, go up instead of savePath's contents: a state taken
   // from the running game, which is what Android's slot "Subir" sends.
   ipcMain.handle('hub:save-upload', async (event, { romPath, savePath, bytes: given, slot, filename }) => {
+    assertKnownRom(romPath);
+    if (!given && !isN3ds(romPath)) assertSaveOf(romPath, savePath);
     let bytes = given;
     let crc = given && zlib.crc32(given);
     if (!given) {
@@ -820,6 +835,8 @@ function register() {
   // be downloaded for that -- the API lists no checksum -- but it is a few
   // kilobytes. Null for a side that has nothing.
   ipcMain.handle('hub:save-status', async (event, { romPath, savePath, slot }) => {
+    if (isN3ds(romPath)) assertKnownRom(romPath);
+    else assertSaveOf(romPath, savePath);
     const key = await gameKey(romPath);
     const remote = (await shared.listCloudSaves(requireToken())).find(
       (save) => save.gameKey === key && save.slot === slot,
@@ -844,6 +861,8 @@ function register() {
   ipcMain.handle('hub:save-sync', (event, { romPath, savePath, slot, filename, lastCrc, settled }) =>
     trackUpload(
       (async () => {
+        if (isN3ds(romPath)) assertKnownRom(romPath);
+        else assertSaveOf(romPath, savePath);
         if (isN3ds(romPath) && !settled) {
           const touched = save3ds.newestMtimeMs(await n3dsDataDir(romPath));
           if (Date.now() - touched < SAVE_SETTLE_MS) return lastCrc;
@@ -898,8 +917,11 @@ function register() {
   // romPath is given for a game's own save, which for a 3DS game is a folder
   // rather than the file savePath names; a state has neither and only a path.
   ipcMain.handle('hub:save-download', async (event, { id, savePath, romPath }) => {
+    assertSaveOf(romPath, savePath);
     const bytes = await shared.downloadCloudSave(requireToken(), id);
-    if (romPath && isN3ds(romPath)) {
+    // A 3DS game's own save goes back into the console's SD card; a state
+    // (".state") is a file for any console.
+    if (isN3ds(romPath) && !/\.state$/i.test(savePath)) {
       await restore3dsSave(romPath, bytes);
       return romPath;
     }
@@ -931,12 +953,14 @@ function register() {
     const file = pickedImport;
     pickedImport = null;
     if (!file) throw new Error('Elige primero el archivo de la partida');
+    assertKnownRom(romPath);
     return isN3ds(romPath) ? import3dsSave(romPath, file) : importBatterySave(romPath, file);
   });
 
   // Where to put the export is asked here too, so the page never names a
   // file for this process to write. Resolves false if the user cancels.
   ipcMain.handle('hub:save-export', async (event, romPath) => {
+    assertKnownRom(romPath);
     const save = await exportedSave(romPath);
     if (!save) throw new Error('Este juego todavía no ha guardado nada');
     const { canceled, filePath } = await dialog.showSaveDialog(BrowserWindow.fromWebContents(event.sender), {
@@ -953,4 +977,4 @@ function register() {
   ipcMain.handle('hub:save-delete', (event, id) => shared.deleteCloudSave(requireToken(), id));
 }
 
-module.exports = { register, VERSION_CODE, uploading, waitForUploads };
+module.exports = { register, VERSION_CODE, uploading, waitForUploads, rememberRom, rememberFolder };

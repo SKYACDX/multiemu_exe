@@ -16,7 +16,9 @@ ipcMain.handle('pick-rom', async (event, title, extensions = ['gb', 'gbc', 'gba'
     properties: ['openFile'],
     filters: [{ name: 'ROMs', extensions }],
   });
-  return canceled ? null : filePaths[0];
+  if (canceled) return null;
+  hub.rememberRom(filePaths[0]);
+  return filePaths[0];
 });
 
 // Android's "Elegir carpeta": the folder whose ROMs the main menu lists.
@@ -25,7 +27,9 @@ ipcMain.handle('pick-folder', async () => {
     title: 'Tu carpeta de ROMs',
     properties: ['openDirectory'],
   });
-  return canceled ? null : filePaths[0];
+  if (canceled) return null;
+  hub.rememberFolder(filePaths[0]);
+  return filePaths[0];
 });
 
 // A screenshot to attach to a report, with a preview for the form. Android
@@ -85,6 +89,7 @@ ipcMain.handle('menu-window', (event) => {
 
 app.whenReady().then(() => {
   hub.register();
+  if (romArgument) hub.rememberRom(romArgument);
 
   const win = new BrowserWindow({
     ...MENU_SIZE,

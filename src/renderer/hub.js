@@ -338,7 +338,7 @@ function saveRow(save) {
     // pause menu. Nothing holds those files open, so the game can keep going.
     if (save.slot !== GAME_SAVE_SLOT) {
       try {
-        await hub.downloadSave({ id: save.id, savePath: emu.stateFile(save.slot) });
+        await hub.downloadSave({ id: save.id, savePath: emu.stateFile(save.slot), romPath: loadedRom() });
         toast(`${slotLabel(save.slot)} traído. Cárgalo desde el menú de pausa.`);
       } catch (error) {
         toast(ipcErrorMessage(error));
@@ -527,7 +527,7 @@ async function uploadState(slot) {
 async function downloadState(slot) {
   const save = cloudSaveIn(slot);
   try {
-    await hub.downloadSave({ id: save.id, savePath: emu.stateFile(slot) });
+    await hub.downloadSave({ id: save.id, savePath: emu.stateFile(slot), romPath: loadedRom() });
     if (!emu.loadState(slot)) throw new Error('Ese estado no se pudo cargar en este juego');
     toast(`Slot ${slot + 1} traído de la nube`);
     resumeGame();

@@ -1,7 +1,7 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const { normalize } = require('./saveNormalizer');
+const { normalize, readCapped } = require('./saveNormalizer');
 const { contextBridge, ipcRenderer } = require('electron');
 
 const gb = require('../build/Release/gb_addon.node');
@@ -141,8 +141,13 @@ function adoptForeignSave(romPath, sidecar, target) {
     if (!source) return null;
   }
   const name = path.basename(source);
-  if (fs.statSync(source).size > MAX_FOREIGN_SAVE) return `No se pudo usar ${name}: es demasiado grande para ser una partida.`;
-  const result = normalize(fs.readFileSync(source), target);
+  let bytes;
+  try {
+    bytes = readCapped(source, MAX_FOREIGN_SAVE);
+  } catch (error) {
+    return `No se pudo usar ${name}: ${error.message}.`;
+  }
+  const result = normalize(bytes, target);
   if (result.error) return `No se pudo usar ${name}: ${result.error}`;
   if (source === sidecar) fs.copyFileSync(sidecar, `${sidecar}.nocash`);
   fs.writeFileSync(`${sidecar}.tmp`, result.bytes);

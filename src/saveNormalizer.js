@@ -76,4 +76,56 @@ function normalize(input, target) {
   return { bytes: new Uint8Array(data), note };
 }
 
-module.exports = { normalize };
+// A file the user picked, read whole but never past max bytes: through one
+// open handle, asking for one byte more than allowed, so a file that grows
+// between a size check and the read cannot slip past the limit (security
+// review of 320744c).
+function readCapped(file, max) {
+  const fs = require('fs');
+  const fd = fs.openSync(file, 'r');
+  try {
+    const buffer = Buffer.alloc(max + 1);
+    let filled = 0;
+    let got;
+    while (filled < buffer.length && (got = fs.readSync(fd, buffer, filled, buffer.length - filled, null)) > 0) filled += got;
+    if (filled > max) throw new Error('Ese archivo es demasiado grande para ser una partida');
+    return buffer.subarray(0, filled);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+// A copy of a save about to be replaced, into folder, dated, keeping the
+// newest five of each name: one copy, overwritten, lost the original on a
+// second import made by mistake (security review of 320744c).
+const BACKUPS_KEPT = 5;
+function backUpSave(folder, name, bytes) {
+  const fs = require('fs');
+  const path = require('path');
+  const extension = path.extname(name);
+  const base = name.slice(0, name.length - extension.length);
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
+  fs.mkdirSync(folder, { recursive: true });
+  // Oldest first: by the date in the name, then by the -2, -3... of copies
+  // made within the same second (the first of them has none).
+  const order = (file) => {
+    const match = file.slice(base.length + 1, file.length - extension.length).match(/^(\d{8}-\d{6})(?:-(\d+))?$/);
+    return match && [match[1], Number(match[2] || 1)];
+  };
+  const isCopy = (file) => file.startsWith(`${base}.`) && file.endsWith(extension) && order(file);
+  const sameSecond = fs.readdirSync(folder).filter(isCopy).map(order).filter((key) => key[0] === stamp);
+  const copy = sameSecond.length ? Math.max(...sameSecond.map((key) => key[1])) + 1 : 1;
+  const target = path.join(folder, `${base}.${stamp}${copy > 1 ? `-${copy}` : ''}${extension}`);
+  fs.writeFileSync(target, bytes);
+  const mine = fs.readdirSync(folder)
+    .filter(isCopy)
+    .sort((a, b) => {
+      const [stampA, copyA] = order(a);
+      const [stampB, copyB] = order(b);
+      return stampA < stampB ? -1 : stampA > stampB ? 1 : copyA - copyB;
+    });
+  for (const old of mine.slice(0, -BACKUPS_KEPT)) fs.rmSync(path.join(folder, old), { force: true });
+  return target;
+}
+
+module.exports = { backUpSave, normalize, readCapped };

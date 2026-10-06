@@ -50,3 +50,28 @@ ok(normalize(filled(128 * K + 16), 'nds-slot2'), 128 * K + 16);
 assert.strictEqual(normalize(new Uint8Array(0), 'gb').error, 'Ese archivo está vacío.');
 
 console.log('saveNormalizer: ok');
+
+// ---- dated copies, the newest five of each kept (backUpSave)
+{
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const { backUpSave } = require('../src/saveNormalizer');
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'backups-'));
+  try {
+    fs.writeFileSync(path.join(folder, 'otro.sav'), 'x'); // another game's: untouched
+    const written = [];
+    for (let i = 0; i < 7; i++) written.push(backUpSave(folder, 'Juego.sav', Buffer.from([i])));
+    const kept = fs.readdirSync(folder).filter((name) => name.startsWith('Juego.'));
+    assert.strictEqual(kept.length, 5, kept.join(', '));
+    // the two oldest went, the newest five stayed, each with its own bytes
+    for (const [i, file] of written.entries()) {
+      assert.strictEqual(fs.existsSync(file), i >= 2, file);
+      if (i >= 2) assert.strictEqual(fs.readFileSync(file)[0], i);
+    }
+    assert.ok(fs.existsSync(path.join(folder, 'otro.sav')));
+  } finally {
+    fs.rmSync(folder, { recursive: true, force: true });
+  }
+  console.log('backUpSave: ok');
+}
