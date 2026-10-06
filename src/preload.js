@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { normalize } = require('./saveNormalizer');
 const { contextBridge, ipcRenderer } = require('electron');
 
 const gb = require('../build/Release/gb_addon.node');
@@ -99,7 +100,8 @@ function persistSave() {
   for (const save of batterySaves) {
     const data = Buffer.from(save.read());
     if (save.last && save.last.equals(data)) continue;
-    fs.writeFileSync(save.path, data);
+    fs.writeFileSync(`${save.path}.tmp`, data);
+    fs.renameSync(`${save.path}.tmp`, save.path);
     save.last = data;
   }
 }
@@ -115,6 +117,39 @@ function trackBatterySave(path, read, load) {
   batterySaves.push(save);
 }
 
+// A save from another emulator beside the ROM (docs/save-import.md in the
+// Android repo): a DeSmuME/DraStic .dsv or a RetroArch .srm named like the
+// ROM becomes the .sav the core reads, the original left where it was --
+// only while there is no .sav to lose. A NO$GBA .sav is unwrapped where it
+// is, its original kept as .sav.nocash. What to tell the user, or null.
+const MAX_FOREIGN_SAVE = 33 * 1024 * 1024; // the largest DS save plus a wrapper
+const NOCASH_MAGIC = Buffer.from('NocashGbaBackupMediaSavDataFile', 'ascii');
+
+function adoptForeignSave(romPath, sidecar, target) {
+  let source;
+  if (fs.existsSync(sidecar)) {
+    if (target !== 'nds' || fs.statSync(sidecar).size < NOCASH_MAGIC.length) return null;
+    const head = Buffer.alloc(NOCASH_MAGIC.length);
+    const fd = fs.openSync(sidecar, 'r');
+    fs.readSync(fd, head, 0, head.length, 0);
+    fs.closeSync(fd);
+    if (!head.equals(NOCASH_MAGIC)) return null;
+    source = sidecar;
+  } else {
+    const base = romPath.replace(/\.[^.]+$/, '');
+    source = ['.dsv', '.srm'].map((extension) => base + extension).find((file) => fs.existsSync(file));
+    if (!source) return null;
+  }
+  const name = path.basename(source);
+  if (fs.statSync(source).size > MAX_FOREIGN_SAVE) return `No se pudo usar ${name}: es demasiado grande para ser una partida.`;
+  const result = normalize(fs.readFileSync(source), target);
+  if (result.error) return `No se pudo usar ${name}: ${result.error}`;
+  if (source === sidecar) fs.copyFileSync(sidecar, `${sidecar}.nocash`);
+  fs.writeFileSync(`${sidecar}.tmp`, result.bytes);
+  fs.renameSync(`${sidecar}.tmp`, sidecar);
+  return [`Partida importada de ${name}.`, result.note].filter(Boolean).join(' ');
+}
+
 function open(romPath) {
   const sidecar = romPath.replace(/\.[^.]+$/, '.sav');
   // Reset, or the next game's save RAM gets compared against the previous
@@ -124,6 +159,8 @@ function open(romPath) {
   ranSinceAutosave = false;
 
   let screens = 1;
+  const system = systemOf(romPath);
+  const note = system === '3ds' ? null : adoptForeignSave(romPath, sidecar, system);
   if (/\.(3ds|cci|cxi)$/i.test(romPath)) {
     // The console's NAND and SD card, and with them every 3DS save, live
     // under here (Azahar/ inside it) rather than next to the ROM: a 3DS
@@ -156,6 +193,7 @@ function open(romPath) {
     height: core.height,
     screens,
     audioSampleRate: core.audioSampleRate || 0,
+    note,
   };
 }
 
@@ -304,7 +342,8 @@ contextBridge.exposeInMainWorld('hub', {
   gameKey: (romPath) => ipcRenderer.invoke('hub:game-key', romPath),
   uploadSave: (params) => ipcRenderer.invoke('hub:save-upload', params),
   downloadSave: (params) => ipcRenderer.invoke('hub:save-download', params),
-  pickImport: () => ipcRenderer.invoke('hub:save-import-pick'),
+  pickImport: (romPath) => ipcRenderer.invoke('hub:save-import-pick', romPath),
+  exportSave: (romPath) => ipcRenderer.invoke('hub:save-export', romPath),
   importSave: (params) => ipcRenderer.invoke('hub:save-import', params),
   deleteSave: (id) => ipcRenderer.invoke('hub:save-delete', id),
   saveStatus: (params) => ipcRenderer.invoke('hub:save-status', params),
@@ -410,6 +449,8 @@ contextBridge.exposeInMainWorld('emu', {
   // player picks the console on a DS wireless link; a single DS ignores it.
   touch: (x, y, player) => core.touch && core.touch(x, y, player),
   releaseTouch: () => core.releaseTouch && core.releaseTouch(),
+  // Before exporting it: the Game Boy save is written on a timer.
+  flushSave: () => persistSave(),
   // Called when a game is closed: the Game Boy save is otherwise only
   // written on a timer and at exit, so up to five seconds would be lost.
   close: () => {

@@ -16,6 +16,7 @@ const { BrowserWindow, Notification, app, dialog, ipcMain, safeStorage, shell } 
 
 const shared = require('../build/shared.js');
 const save3ds = require('./save3ds');
+const { normalize } = require('./saveNormalizer');
 
 // This build's place in RomHack Hub's versionCode sequence, which is shared
 // across platforms rather than per-platform (see docs/app-listing-api.md in
@@ -410,6 +411,39 @@ async function import3dsSave(romPath, file) {
   if (fs.statSync(file).size > MAX_IMPORT_BYTES) throw new Error('Ese archivo es demasiado grande para ser una partida');
   const incoming = save3ds.unpack(new Uint8Array(fs.readFileSync(file)));
   return replace3dsSave(await n3dsId(romPath), null, (current) => save3ds.importTree(incoming, current));
+}
+
+// A Game Boy, GBA or DS save from another emulator, through the normalizer
+// shared with Android (src/saveNormalizer.js), replacing the .sav beside the
+// ROM; the one it replaces goes to save-backups/ first. The game is closed
+// while this runs (the renderer sees to it), so no core is writing the file.
+const SAVE_TARGET = { gb: 'gb', gbc: 'gb', gba: 'gba', nds: 'nds' };
+const MAX_IMPORT_SAVE = 33 * 1024 * 1024; // the largest DS save plus a wrapper
+function importBatterySave(romPath, file) {
+  const target = SAVE_TARGET[path.extname(romPath).slice(1).toLowerCase()];
+  if (!target) throw new Error('Este juego no tiene un guardado que se pueda importar');
+  if (fs.statSync(file).size > MAX_IMPORT_SAVE) throw new Error('Ese archivo es demasiado grande para ser una partida');
+  const result = normalize(fs.readFileSync(file), target);
+  if (result.error) throw new Error(result.error);
+  const sidecar = romPath.replace(/\.[^.]+$/, '.sav');
+  if (fs.existsSync(sidecar)) fs.copyFileSync(sidecar, userFile('save-backups', path.basename(sidecar)));
+  fs.writeFileSync(`${sidecar}.tmp`, result.bytes);
+  fs.renameSync(`${sidecar}.tmp`, sidecar);
+  return result.note ? [result.note] : [];
+}
+
+// The game's save as a file another emulator opens: the .sav as it is (the
+// raw format every one of them reads), or for a 3DS game its data folder
+// zipped the way Citra and Azahar keep it ("00000001.metadata",
+// "00000001/..."). Null when the game has saved nothing yet.
+async function exportedSave(romPath) {
+  const base = path.basename(romPath).replace(/\.[^.]+$/, '');
+  if (isN3ds(romPath)) {
+    const tree = save3ds.readTree(await n3dsDataDir(romPath));
+    return save3ds.hasSaveData(tree) ? { bytes: save3ds.pack(tree), name: `${base}.zip`, type: 'zip' } : null;
+  }
+  const sidecar = romPath.replace(/\.[^.]+$/, '.sav');
+  return fs.existsSync(sidecar) ? { bytes: fs.readFileSync(sidecar), name: `${base}.sav`, type: 'sav' } : null;
 }
 
 // A save the core wrote less than this long ago may be half written (it
@@ -810,12 +844,14 @@ function register() {
   // user chose; import reads that file and no other. The page never hands
   // this process a path to read (security review of 1f8f01a).
   let pickedImport = null;
-  ipcMain.handle('hub:save-import-pick', async (event) => {
+  ipcMain.handle('hub:save-import-pick', async (event, romPath) => {
     pickedImport = null;
     const { canceled, filePaths } = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), {
-      title: 'Partida de 3DS para importar',
+      title: 'Partida para importar',
       properties: ['openFile'],
-      filters: [{ name: 'Partida (.zip)', extensions: ['zip'] }],
+      filters: isN3ds(romPath)
+        ? [{ name: 'Partida de 3DS (.zip)', extensions: ['zip'] }]
+        : [{ name: 'Partida (.sav, .dsv, .srm)', extensions: ['sav', 'dsv', 'srm'] }],
     });
     if (canceled) return false;
     pickedImport = filePaths[0];
@@ -826,8 +862,22 @@ function register() {
     const file = pickedImport;
     pickedImport = null;
     if (!file) throw new Error('Elige primero el archivo de la partida');
-    if (!isN3ds(romPath)) throw new Error('Importar una partida solo funciona con juegos de 3DS por ahora');
-    return import3dsSave(romPath, file);
+    return isN3ds(romPath) ? import3dsSave(romPath, file) : importBatterySave(romPath, file);
+  });
+
+  // Where to put the export is asked here too, so the page never names a
+  // file for this process to write. Resolves false if the user cancels.
+  ipcMain.handle('hub:save-export', async (event, romPath) => {
+    const save = await exportedSave(romPath);
+    if (!save) throw new Error('Este juego todavía no ha guardado nada');
+    const { canceled, filePath } = await dialog.showSaveDialog(BrowserWindow.fromWebContents(event.sender), {
+      title: 'Exportar partida',
+      defaultPath: path.join(app.getPath('documents'), save.name),
+      filters: [{ name: save.type === 'zip' ? 'Partida de 3DS (.zip)' : 'Partida (.sav)', extensions: [save.type] }],
+    });
+    if (canceled || !filePath) return false;
+    fs.writeFileSync(filePath, save.bytes);
+    return true;
   });
 
   // Gone from the cloud for every device; the copy on this PC stays.

@@ -301,6 +301,7 @@ function startRom(romPath, partnerRom) {
   currentRom = romPath;
   linked = Boolean(partnerRom);
   linkPlayer = 0;
+  if (size.note) toast(size.note); // a save from another emulator, taken in
   // Opened from the pause menu (a save brought down from the cloud) this
   // is still set, and would keep the new game's keys ignored.
   paused = false;

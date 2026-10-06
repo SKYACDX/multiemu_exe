@@ -558,18 +558,26 @@ function showGameSaveRow() {
   box.replaceChildren(row, ...importRow());
 }
 
-// A 3DS game's save from another emulator (save3ds.importTree has the
-// formats). Empty for the other consoles, whose raw .sav beside the ROM
-// already works.
+// The game's save to or from another emulator: what each accepts is in
+// save3ds.importTree (3DS) and src/saveNormalizer.js (the rest).
+const IMPORT_FORMATS = {
+  '3ds': 'Citra, Azahar o Checkpoint, en .zip',
+  nds: '.sav, .dsv de DeSmuME/DraStic o de NO$GBA',
+  other: '.sav o .srm',
+};
+
 function importRow() {
   const rom = loadedRom();
-  if (!rom || !is3ds(rom)) return [];
-  const label = element('span', 'Partida de otro emulador (Citra, Azahar o Checkpoint, en .zip)');
+  if (!rom) return [];
+  const formats = is3ds(rom) ? IMPORT_FORMATS['3ds'] : /\.nds$/i.test(rom) ? IMPORT_FORMATS.nds : IMPORT_FORMATS.other;
+  const label = element('span', `Partida de otro emulador (${formats})`);
   label.style.flex = '1';
-  const button = element('button', 'Importar…');
-  button.addEventListener('click', () => importGameSave(rom));
+  const importButton = element('button', 'Importar…');
+  importButton.addEventListener('click', () => importGameSave(rom));
+  const exportButton = element('button', 'Exportar…');
+  exportButton.addEventListener('click', () => exportGameSave(rom));
   const row = element('div', undefined, 'row');
-  row.append(label, button);
+  row.append(label, importButton, exportButton);
   return [row];
 }
 
@@ -577,7 +585,7 @@ function importRow() {
 // and the game opens again either way. The one replaced goes to
 // save-backups/ first.
 async function importGameSave(rom) {
-  if (!(await hub.pickImport())) return;
+  if (!(await hub.pickImport(rom))) return;
   emu.close();
   try {
     const warnings = await hub.importSave({ romPath: rom });
@@ -586,6 +594,21 @@ async function importGameSave(rom) {
     toast(ipcErrorMessage(error));
   }
   playRom(rom);
+}
+
+// A 3DS game writes its save as several files while it runs, so it is closed
+// first and opened again after, as for an import; the other cores write one
+// file, and the Game Boy's only needs its timer flushed.
+async function exportGameSave(rom) {
+  const reopen = is3ds(rom);
+  if (reopen) emu.close();
+  else emu.flushSave();
+  try {
+    if (await hub.exportSave(rom)) toast('Partida exportada');
+  } catch (error) {
+    toast(ipcErrorMessage(error));
+  }
+  if (reopen) playRom(rom);
 }
 
 // ---- The picture behind the game ---------------------------------------
