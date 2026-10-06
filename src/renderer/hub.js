@@ -577,11 +577,10 @@ function importRow() {
 // and the game opens again either way. The one replaced goes to
 // save-backups/ first.
 async function importGameSave(rom) {
-  const file = await emu.pickRom('Partida de 3DS para importar', ['zip'], 'Partida (.zip)');
-  if (!file) return;
+  if (!(await hub.pickImport())) return;
   emu.close();
   try {
-    const warnings = await hub.importSave({ romPath: rom, file });
+    const warnings = await hub.importSave({ romPath: rom });
     toast(['Partida importada', ...warnings].join('. '));
   } catch (error) {
     toast(ipcErrorMessage(error));

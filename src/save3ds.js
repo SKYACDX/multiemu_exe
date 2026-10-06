@@ -143,21 +143,76 @@ function pack(tree) {
   return zipSync(canonical(tree), { level: 6, mtime: new Date(1980, 0, 1) });
 }
 
+// The zip's own record of each entry, from its central directory: name ->
+// { crc, size }. fflate trusts the sizes a zip declares and stops inflating
+// there, so a doctored size unpacked a save cut short without a word (found
+// in review by the security session); every entry is checked against this
+// after inflating instead. Found the way fflate finds it (the last end
+// record), and names decoded as fflate does (UTF-8 only with flag bit 11),
+// so the two agree on what the entries are called. Zip64 is refused: no
+// save comes near 4GB.
+const MAX_ENTRIES = 4096;
+function centralDirectory(bytes) {
+  const zip = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const invalid = () => new Error('Ese archivo no es un .zip válido');
+  let end = zip.length - 22;
+  while (end >= 0 && zip.readUInt32LE(end) !== 0x06054b50) end--;
+  if (end < 0) throw invalid();
+  const count = zip.readUInt16LE(end + 10);
+  if (count > MAX_ENTRIES) throw new Error('El guardado trae demasiados archivos');
+  const entries = new Map();
+  let at = zip.readUInt32LE(end + 16);
+  for (let i = 0; i < count; i++) {
+    if (at + 46 > zip.length || zip.readUInt32LE(at) !== 0x02014b50) throw invalid();
+    const size = zip.readUInt32LE(at + 24);
+    if (size === 0xffffffff) throw new Error('El guardado es demasiado grande');
+    const nameLength = zip.readUInt16LE(at + 28);
+    const encoding = zip.readUInt16LE(at + 8) & 0x800 ? 'utf8' : 'latin1';
+    const name = zip.toString(encoding, at + 46, at + 46 + nameLength);
+    if (entries.has(name)) throw new Error('El guardado trae archivos repetidos');
+    entries.set(name, { crc: zip.readUInt32LE(at + 16), size });
+    at += 46 + nameLength + zip.readUInt16LE(at + 30) + zip.readUInt16LE(at + 32);
+  }
+  return entries;
+}
+
+// A path that can only ever name a file inside the folder it is written to,
+// on Windows: no drive or leading slash, no "." or "..", none of the
+// characters Windows refuses (":" would make an NTFS alternate stream), no
+// name ending in a dot or space (Windows drops them, so two names become
+// one), and no device name (CON, AUX... write to the device, not a file,
+// whatever the extension).
+const RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+function safeName(name) {
+  if (/^([a-zA-Z]:|\/)/.test(name)) return false;
+  const segments = (name.endsWith('/') ? name.slice(0, -1) : name).split('/');
+  return segments.every((segment) =>
+    segment && segment !== '.' && segment !== '..' && !/[\x00-\x1f<>:"|?*]/.test(segment) &&
+    !/[. ]$/.test(segment) && !RESERVED.test(segment.split('.')[0]));
+}
+
 function unpack(bytes) {
+  const declared = centralDirectory(bytes);
   let total = 0;
-  const tree = unzipSync(bytes, {
-    filter: (file) => {
-      total += file.originalSize;
-      if (total > MAX_UNPACKED_BYTES) throw new Error('El guardado es demasiado grande');
-      return true;
-    },
-  });
+  for (const { size } of declared.values()) {
+    total += size;
+    if (total > MAX_UNPACKED_BYTES) throw new Error('El guardado es demasiado grande');
+  }
+  const tree = unzipSync(bytes);
   const safe = {};
+  const seen = new Set();
   for (const [stored, data] of Object.entries(tree)) {
-    const name = stored.replace(/\\/g, '/');
-    if (/^([a-zA-Z]:|\/)/.test(name) || name.split('/').includes('..')) {
-      throw new Error('El guardado trae una ruta no permitida');
+    const entry = declared.get(stored);
+    if (!entry || data.length !== entry.size || zlib.crc32(data) >>> 0 !== entry.crc) {
+      throw new Error('El guardado está dañado o manipulado');
     }
+    const name = stored.replace(/\\/g, '/');
+    if (!safeName(name)) throw new Error('El guardado trae una ruta no permitida');
+    // Windows does not tell "Main" from "main", nor "a\b" from "a/b": two
+    // such entries would land on one file, the second silently winning.
+    const folded = name.toLowerCase();
+    if (seen.has(folded)) throw new Error('El guardado trae archivos repetidos');
+    seen.add(folded);
     safe[name] = data;
   }
   return safe;
@@ -224,8 +279,12 @@ function writeTree(dir, tree) {
   const staging = `${dir}.incoming`;
   fs.rmSync(staging, { recursive: true, force: true });
   fs.mkdirSync(staging, { recursive: true });
+  const inside = path.resolve(staging) + path.sep;
   for (const [name, data] of Object.entries(tree)) {
-    const target = path.join(staging, name);
+    const target = path.resolve(staging, name);
+    // unpack already refuses such names; this holds even for a tree that did
+    // not come through it.
+    if (!target.startsWith(inside)) throw new Error('El guardado trae una ruta no permitida');
     if (name.endsWith('/')) {
       fs.mkdirSync(target, { recursive: true });
     } else {

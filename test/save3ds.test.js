@@ -98,6 +98,36 @@ async function main() {
       assert.throws(() => save3ds.unpack(zipSync({ [name]: bytes(1) })), /ruta no permitida/, name);
     }
 
+    // ---- a doctored zip is refused, not unpacked short (security review of 1f8f01a)
+    // The central directory record of the only entry: sizes at +20/+24, CRC at +16.
+    const directory = (zip) => zip.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
+    const honest = Buffer.from(zipSync({ main: new Uint8Array(4096).fill(7) }, { level: 0 }));
+    assert.strictEqual(Object.keys(save3ds.unpack(honest)).length, 1, 'an honest zip still unpacks');
+    const smaller = Buffer.from(honest); // declares 1024 bytes where there are 4096
+    for (const at of [22, directory(smaller) + 20, directory(smaller) + 24]) smaller.writeUInt32LE(1024, at);
+    assert.throws(() => save3ds.unpack(smaller), /dañado o manipulado/, 'size forged smaller');
+    const wrongCrc = Buffer.from(honest);
+    wrongCrc.writeUInt32LE(0x12345678, directory(wrongCrc) + 16);
+    assert.throws(() => save3ds.unpack(wrongCrc), /dañado o manipulado/, 'wrong CRC');
+    // names Windows treats specially: devices, NTFS streams, trailing dots and spaces, reserved characters
+    for (const name of ['00000001/CON', '00000001/aux.txt', '00000001/Com1.sav', 'nul', '00000001/main:ads',
+      '00000001/main.', '00000001/main ', 'a/./b', 'a//b', 'x<y', 'x?y', `x${String.fromCharCode(1)}y`]) {
+      assert.throws(() => save3ds.unpack(zipSync({ [name]: bytes(1) })), /ruta no permitida/, name);
+    }
+    for (const name of ['00000001/console.sav', '00000001/con1', 'auxiliar']) {
+      assert.ok(save3ds.unpack(zipSync({ [name]: bytes(1) }))[name], `${name} is an ordinary name`);
+    }
+    // two entries that would land on one file
+    assert.throws(() => save3ds.unpack(zipSync({ 'a/Main': bytes(1), 'a/main': bytes(2) })), /repetidos/);
+    assert.throws(() => save3ds.unpack(zipSync({ 'a\\b': bytes(1), 'a/b': bytes(2) })), /repetidos/);
+    // too many entries
+    const many = {};
+    for (let i = 0; i <= 4096; i++) many[`f${i}`] = bytes(1);
+    assert.throws(() => save3ds.unpack(zipSync(many)), /demasiados archivos/);
+    // writeTree holds on its own, whatever unpack let through
+    assert.throws(() => save3ds.writeTree(path.join(root, 'escape-test'), { '../fuera.sav': bytes(1) }), /ruta no permitida/);
+    assert.ok(!fs.existsSync(path.join(root, 'fuera.sav')));
+
     // ---- a save brought from another emulator (importTree)
     const meta = bytes(7, 7);
     const mine = { '00000001.metadata': bytes(1, 1) }; // what this console made on first boot

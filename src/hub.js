@@ -805,8 +805,27 @@ function register() {
   });
 
   // A save from another emulator: 3DS only for now (the other consoles take a
-  // raw .sav beside the ROM). Resolves to warnings worth showing.
-  ipcMain.handle('hub:save-import', (event, { romPath, file }) => {
+  // raw .sav beside the ROM). Two steps, because the renderer has to close
+  // the game between them: pick opens the dialog here and keeps the file the
+  // user chose; import reads that file and no other. The page never hands
+  // this process a path to read (security review of 1f8f01a).
+  let pickedImport = null;
+  ipcMain.handle('hub:save-import-pick', async (event) => {
+    pickedImport = null;
+    const { canceled, filePaths } = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), {
+      title: 'Partida de 3DS para importar',
+      properties: ['openFile'],
+      filters: [{ name: 'Partida (.zip)', extensions: ['zip'] }],
+    });
+    if (canceled) return false;
+    pickedImport = filePaths[0];
+    return true;
+  });
+  // Resolves to warnings worth showing.
+  ipcMain.handle('hub:save-import', (event, { romPath }) => {
+    const file = pickedImport;
+    pickedImport = null;
+    if (!file) throw new Error('Elige primero el archivo de la partida');
     if (!isN3ds(romPath)) throw new Error('Importar una partida solo funciona con juegos de 3DS por ahora');
     return import3dsSave(romPath, file);
   });
