@@ -21,6 +21,7 @@
 #include "Net_Slirp.h"
 #include "ds_platform.h"
 
+#include <io.h>
 #include <windows.h>
 
 #include <chrono>
@@ -241,20 +242,29 @@ void SignalStop(StopReason reason, void* userdata) {
     Log(LogLevel::Info, "SignalStop reason=%d\n", static_cast<int>(reason));
 }
 
-static void WriteWholeFile(const std::string* path, const u8* data, u32 length) {
-    if (!path || path->empty()) return;
-    FILE* f = fopen(path->c_str(), "wb");
-    if (!f) return;
-    fwrite(data, 1, length, f);
-    fclose(f);
+// Through a temporary file, flushed to the disk and then renamed over the
+// real one: "wb" on the save itself truncates it first, so the app dying
+// (or the power going) mid-write left a half-written save behind. The
+// rename either happens whole or not at all. fopen and MoveFileExA both
+// take the path in the ANSI code page, so they agree on what it names.
+static bool WriteWholeFile(const std::string& path, const u8* data, u32 length) {
+    if (path.empty()) return false;
+    const std::string temp = path + ".tmp";
+    FILE* f = fopen(temp.c_str(), "wb");
+    if (!f) return false;
+    bool ok = fwrite(data, 1, length, f) == length && fflush(f) == 0 && _commit(_fileno(f)) == 0;
+    ok = fclose(f) == 0 && ok;
+    if (ok) ok = MoveFileExA(temp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    if (!ok) remove(temp.c_str());
+    return ok;
 }
 
 void WriteNDSSave(const u8* savedata, u32 savelen, u32 writeoffset, u32 writelen, void* userdata) {
-    WriteWholeFile(static_cast<const std::string*>(userdata), savedata, savelen);
+    if (const auto* path = static_cast<const std::string*>(userdata)) WriteWholeFile(*path, savedata, savelen);
 }
 
 void WriteGBASave(const u8* savedata, u32 savelen, u32 writeoffset, u32 writelen, void* userdata) {
-    WriteWholeFile(static_cast<const std::string*>(userdata), savedata, savelen);
+    if (const auto* path = static_cast<const std::string*>(userdata)) WriteWholeFile(*path, savedata, savelen);
 }
 
 // Called whenever the emulated console writes to its own firmware -- which
@@ -281,14 +291,12 @@ void WriteFirmware(const Firmware& firmware, u32 writeoffset, u32 writelen, void
     lastWritten.assign(buffer, buffer + length);
 
     const std::string path = GetLocalFilePath(kFirmwareFileName);
-    FILE* f = fopen(path.c_str(), "wb");
-    if (!f) {
-        Log(LogLevel::Error, "firmware: could not open %s for writing\n", path.c_str());
+    if (!WriteWholeFile(path, buffer, length)) {
+        Log(LogLevel::Error, "firmware: could not write %s\n", path.c_str());
+        lastWritten.clear(); // so the next change tries again
         return;
     }
-    const size_t written = fwrite(buffer, 1, length, f);
-    fclose(f);
-    Log(LogLevel::Info, "firmware: saved %zu/%u bytes\n", written, length);
+    Log(LogLevel::Info, "firmware: saved %u bytes\n", length);
 }
 
 // TODO: persist the emulated RTC's date/time if a game changes it.
