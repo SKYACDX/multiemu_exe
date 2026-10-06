@@ -317,6 +317,71 @@ async function n3dsTitle(romPath, entry) {
   return null;
 }
 
+// The name a cloud save carries, so the public profile shows games and not
+// keys. Read from the ROM, never from the file name (RomHack Hub's privacy
+// rule; Android's RomTitle.forCloud does the same): for a DS or 3DS game the
+// title Recientes shows, else the header's (DS 0x00, GBA 0xA0, GB 0x134).
+// Undefined when there is none, and the server keeps what it had.
+async function cloudTitle(romPath) {
+  try {
+    const entry = romEntry(romPath);
+    if (!entry) return undefined;
+    const is3ds = ['3ds', 'cci', 'cxi'].includes(entry.extension);
+    let title = null;
+    if (is3ds) title = await n3dsTitle(romPath, entry);
+    else if (entry.extension === 'nds') title = await dsTitle(romPath, entry);
+    if (!title && !is3ds) {
+      const header = new Uint8Array(await readRomRange(romPath, entry, 0, 0x150));
+      title = shared.readRomTitle(header, entry.extension === 'gbc' ? 'gb' : entry.extension);
+    }
+    return shared.cleanSaveTitle(title);
+  } catch {
+    return undefined;
+  }
+}
+
+// Saves uploaded before titles existed: each key with none gets the name of
+// the ROM it belongs to, if that ROM is in Recientes or the ROM folder. Once
+// per session, in the background; finding the key means reading a ROM whole
+// for its CRC, so only ROMs of a console that has a nameless save are read.
+const KEY_SYSTEM = { gb: 'gb', gbc: 'gb', gba: 'gba', nds: 'nds', '3ds': '3ds', cci: '3ds', cxi: '3ds' };
+let titlesFilled = false;
+async function fillMissingTitles() {
+  if (titlesFilled || !token) return;
+  titlesFilled = true;
+  const missing = new Set((await shared.listCloudSaves(token)).filter((save) => !save.title).map((save) => save.gameKey));
+  if (!missing.size) return;
+  const systems = new Set([...missing].map((key) => key.split(':')[0]));
+  let settings = {};
+  try {
+    settings = JSON.parse(fs.readFileSync(userFile('settings.json'), 'utf8'));
+  } catch {
+    // No settings yet: nothing opened, nothing to name.
+  }
+  const candidates = [...(settings.recentRoms || [])];
+  try {
+    if (settings.romFolder) {
+      for (const name of fs.readdirSync(settings.romFolder)) candidates.push(path.join(settings.romFolder, name));
+    }
+  } catch {
+    // A folder that moved: Recientes alone.
+  }
+  for (const rom of new Set(candidates)) {
+    if (!missing.size) break;
+    if (!systems.has(KEY_SYSTEM[path.extname(rom).slice(1).toLowerCase()]) || !fs.existsSync(rom)) continue;
+    let key;
+    try {
+      key = await gameKey(rom);
+    } catch {
+      continue;
+    }
+    if (!missing.has(key)) continue;
+    missing.delete(key);
+    const title = await cloudTitle(rom);
+    if (title) await shared.setCloudSaveTitle(token, key, title).catch(() => {});
+  }
+}
+
 // Keyed by the ROM's path: the same game opened from the same place.
 const pictureKey = (romPath) => crypto.createHash('sha1').update(romPath.toLowerCase()).digest('hex');
 // A .zip is played through the ROM it unpacks to (hub:unpack-rom), so its
@@ -483,6 +548,7 @@ function removeUpdateInstallers() {
 function forgetToken() {
   token = null;
   username = null;
+  titlesFilled = false;
   fs.rmSync(tokenFile(), { force: true });
 }
 
@@ -723,6 +789,7 @@ function register() {
   ipcMain.handle('hub:logout', forgetToken);
 
   ipcMain.handle('hub:saves', () => shared.listCloudSaves(requireToken()));
+  ipcMain.handle('hub:fill-titles', () => fillMissingTitles());
 
   // The same key uploads use, so the account screen can show just the saves
   // belonging to the game that is open.
@@ -743,7 +810,7 @@ function register() {
       if (!local) throw new Error('Este juego todavía no ha guardado nada');
       ({ bytes, crc } = local);
     }
-    await shared.uploadCloudSave(requireToken(), await gameKey(romPath), slot, bytes, filename);
+    await shared.uploadCloudSave(requireToken(), await gameKey(romPath), slot, bytes, filename, await cloudTitle(romPath));
     return crc;
   });
 
@@ -783,7 +850,9 @@ function register() {
         }
         const local = await localSave(romPath, savePath);
         if (!local || local.crc === lastCrc) return lastCrc;
-        await shared.uploadCloudSave(requireToken(), await gameKey(romPath), slot, local.bytes, filename);
+        await shared.uploadCloudSave(
+          requireToken(), await gameKey(romPath), slot, local.bytes, filename, await cloudTitle(romPath),
+        );
         return local.crc;
       })(),
     ),

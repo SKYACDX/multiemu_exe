@@ -345,6 +345,7 @@ contextBridge.exposeInMainWorld('hub', {
   pickImport: (romPath) => ipcRenderer.invoke('hub:save-import-pick', romPath),
   exportSave: (romPath) => ipcRenderer.invoke('hub:save-export', romPath),
   importSave: (params) => ipcRenderer.invoke('hub:save-import', params),
+  fillTitles: () => ipcRenderer.invoke('hub:fill-titles'),
   deleteSave: (id) => ipcRenderer.invoke('hub:save-delete', id),
   saveStatus: (params) => ipcRenderer.invoke('hub:save-status', params),
   unpackRom: (filePath) => ipcRenderer.invoke('hub:unpack-rom', filePath),

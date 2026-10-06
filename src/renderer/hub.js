@@ -230,7 +230,10 @@ hub.account().then((account) => {
   signedIn = Boolean(account);
   // Android's check at start-up: a session that died while the app was
   // closed is found now, not at the first sync that fails.
-  if (account) hub.saves().catch(() => {});
+  if (account) {
+    hub.saves().catch(() => {});
+    hub.fillTitles().catch(() => {});
+  }
 });
 
 // Android's alert, word for word but "este equipo" (romHackHubAccount.ts,
@@ -264,6 +267,7 @@ function showSession(username) {
   session.hidden = false;
   document.getElementById('session-user').textContent = `Conectado como ${username}`;
   loadCloudSaves();
+  hub.fillTitles().catch(() => {});
 }
 
 async function loadCloudSaves() {
@@ -317,7 +321,7 @@ function saveRow(save) {
   const row = document.createElement('li');
   const title = element('div', undefined, 'title');
   title.append(
-    element('strong', slotLabel(save.slot)),
+    element('strong', save.title ? `${save.title} · ${slotLabel(save.slot)}` : slotLabel(save.slot)),
     element('span', `${fileSizeText(save.fileSize)} · ${new Date(save.updatedAt).toLocaleString()}`),
   );
 
