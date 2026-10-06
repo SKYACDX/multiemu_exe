@@ -29,7 +29,7 @@ try {
   knownRoms(data).assertKnownRom(path.join(games, 'Elegida.gb'));
 
   // unknown: anything else, a subfolder of the folder, nothing at all
-  for (const rom of [path.join(games, 'Otra.gba'), path.join(folder, 'sub', 'x.gba'), 'C:\\Windows\\win.ini', '', null, undefined]) {
+  for (const rom of [path.join(games, 'Otra.gba'), path.join(folder, 'sub', 'x.gba'), path.join(folder, 'notas.txt'), 'C:\\Windows\\win.ini', '', null, undefined]) {
     assert.throws(() => known.assertKnownRom(rom), /no se abrió desde multiemu/, String(rom));
   }
 

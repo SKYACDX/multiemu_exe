@@ -14,6 +14,7 @@ const path = require('path');
 
 const KNOWN_LIMIT = 1000;
 const normalPath = (file) => path.resolve(file).toLowerCase();
+const ROM_EXTENSION = /\.(gbc?|gba|nds|3ds|cci|cxi|zip)$/i;
 
 function knownRoms(userDataDir) {
   const file = path.join(userDataDir, 'known-roms.json');
@@ -54,7 +55,9 @@ function knownRoms(userDataDir) {
 
   function assertKnownRom(romPath) {
     const { roms, folders } = load();
-    if (typeof romPath === 'string' && romPath &&
+    // A ROM's extension too: any file in a known folder would otherwise do,
+    // and "notas.txt" there would get a "notas.sav" beside it.
+    if (typeof romPath === 'string' && ROM_EXTENSION.test(romPath) &&
         (roms.includes(normalPath(romPath)) || folders.includes(normalPath(path.dirname(romPath))))) {
       return;
     }
