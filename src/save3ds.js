@@ -148,7 +148,7 @@ function unpack(bytes) {
   const tree = unzipSync(bytes, {
     filter: (file) => {
       total += file.originalSize;
-      if (total > MAX_UNPACKED_BYTES) throw new Error('El guardado de la nube es demasiado grande');
+      if (total > MAX_UNPACKED_BYTES) throw new Error('El guardado es demasiado grande');
       return true;
     },
   });
@@ -156,11 +156,66 @@ function unpack(bytes) {
   for (const [stored, data] of Object.entries(tree)) {
     const name = stored.replace(/\\/g, '/');
     if (/^([a-zA-Z]:|\/)/.test(name) || name.split('/').includes('..')) {
-      throw new Error('El guardado de la nube trae una ruta no permitida');
+      throw new Error('El guardado trae una ruta no permitida');
     }
     safe[name] = data;
   }
   return safe;
+}
+
+// ---- A save brought from another emulator ---------------------------------
+//
+// What a zip the user picked (already through unpack, so its paths are safe)
+// becomes as the game's `data` folder, plus warnings worth showing. Two shapes
+// arrive (docs/save-import.md in the Android repo, which does the same):
+//
+//   Citra, Lime3DS, Azahar  their own `data` folder, zipped from wherever:
+//                           "00000001.metadata" and "00000001/..." under any
+//                           prefix ("data/", "00040000/00055e00/data/"...).
+//   Checkpoint, JKSM        a real console's save as the archive's own
+//                           files ("main", maybe inside a dated folder),
+//                           which go in "00000001/".
+//
+// Extdata is a different archive and not handled yet: dropped, with a
+// warning. A save without "00000001.metadata" keeps the one this console
+// already made for the game; if the game never ran here there is none, and
+// guessing its contents (the archive's format info) could corrupt the save.
+const JUNK = /(^|\/)(__MACOSX\/|\.DS_Store$|Thumbs\.db$|desktop\.ini$)/i;
+const EXTDATA = /(^|\/)extdata\//i;
+const ARCHIVE_ROOT = /^((?:[^/]+\/)*?)00000001(?:\/|\.metadata$)/;
+
+function importTree(incoming, current) {
+  const warnings = [];
+  let names = Object.keys(incoming).filter((name) => !JUNK.test(name));
+  if (names.some((name) => EXTDATA.test(name))) {
+    warnings.push('Los datos extra del juego (extdata) todavía no se importan');
+    names = names.filter((name) => !EXTDATA.test(name));
+  }
+  const files = names.filter((name) => !name.endsWith('/'));
+
+  const tree = {};
+  const prefixes = files.map((name) => name.match(ARCHIVE_ROOT)).filter(Boolean).map((match) => match[1]);
+  if (prefixes.length) {
+    const prefix = prefixes.reduce((a, b) => (b.length < a.length ? b : a));
+    for (const name of names) {
+      if (name.startsWith(prefix) && name !== prefix) tree[name.slice(prefix.length)] = incoming[name];
+    }
+  } else {
+    const tops = new Set(files.map((name) => (name.includes('/') ? name.split('/')[0] : '')));
+    const folder = tops.size === 1 && !tops.has('') ? `${[...tops][0]}/` : '';
+    for (const name of names) {
+      if (name.startsWith(folder) && name !== folder) tree[`00000001/${name.slice(folder.length)}`] = incoming[name];
+    }
+  }
+
+  if (!hasSaveData(tree)) throw new Error('Ese archivo no trae ninguna partida de 3DS');
+  if (!tree['00000001.metadata']) {
+    if (!current['00000001.metadata']) {
+      throw new Error('Abre el juego una vez en multiemu antes de importar, para que la consola prepare su guardado');
+    }
+    tree['00000001.metadata'] = current['00000001.metadata'];
+  }
+  return { tree, warnings };
 }
 
 // Replaces dir with the tree. Written beside it first and swapped in with a
@@ -212,6 +267,7 @@ module.exports = {
   gameKey,
   dataDir,
   hasSaveData,
+  importTree,
   newestMtimeMs,
   pack,
   programId,

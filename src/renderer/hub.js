@@ -537,6 +537,7 @@ function showGameSaveRow() {
   box.hidden = !loadedRom();
   if (!signedIn) {
     box.replaceChildren(element('p', 'Inicia sesión en Cuenta para sincronizar guardados en la nube.', 'muted'));
+    box.append(...importRow());
     return;
   }
   const cloud = cloudSaveIn(GAME_SAVE_SLOT);
@@ -554,7 +555,38 @@ function showGameSaveRow() {
   down.addEventListener('click', () => bringGameSave(cloud));
   const row = element('div', undefined, 'row');
   row.append(label, up, down);
-  box.replaceChildren(row);
+  box.replaceChildren(row, ...importRow());
+}
+
+// A 3DS game's save from another emulator (save3ds.importTree has the
+// formats). Empty for the other consoles, whose raw .sav beside the ROM
+// already works.
+function importRow() {
+  const rom = loadedRom();
+  if (!rom || !is3ds(rom)) return [];
+  const label = element('span', 'Partida de otro emulador (Citra, Azahar o Checkpoint, en .zip)');
+  label.style.flex = '1';
+  const button = element('button', 'Importar…');
+  button.addEventListener('click', () => importGameSave(rom));
+  const row = element('div', undefined, 'row');
+  row.append(label, button);
+  return [row];
+}
+
+// Like bringGameSave: the core lets go of the save before it is replaced,
+// and the game opens again either way. The one replaced goes to
+// save-backups/ first.
+async function importGameSave(rom) {
+  const file = await emu.pickRom('Partida de 3DS para importar', ['zip'], 'Partida (.zip)');
+  if (!file) return;
+  emu.close();
+  try {
+    const warnings = await hub.importSave({ romPath: rom, file });
+    toast(['Partida importada', ...warnings].join('. '));
+  } catch (error) {
+    toast(ipcErrorMessage(error));
+  }
+  playRom(rom);
 }
 
 // ---- The picture behind the game ---------------------------------------

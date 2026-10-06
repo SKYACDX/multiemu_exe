@@ -10,11 +10,11 @@ const romArgument = process.argv.slice(1).find((argument) => /\.(gbc?|gba|nds|3d
 
 // A .zip is offered too, like Android's file picker: the renderer hands it
 // to hub:unpack-rom before opening it.
-ipcMain.handle('pick-rom', async (event, title, extensions = ['gb', 'gbc', 'gba', 'nds', '3ds', 'cci', 'cxi', 'zip']) => {
+ipcMain.handle('pick-rom', async (event, title, extensions = ['gb', 'gbc', 'gba', 'nds', '3ds', 'cci', 'cxi', 'zip'], kind = 'ROMs') => {
   const { canceled, filePaths } = await dialog.showOpenDialog({
     title,
     properties: ['openFile'],
-    filters: [{ name: 'ROMs', extensions }],
+    filters: [{ name: kind, extensions }],
   });
   return canceled ? null : filePaths[0];
 });

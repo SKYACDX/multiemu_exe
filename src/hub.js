@@ -384,13 +384,32 @@ const remoteCrc = (romPath, bytes) => (isN3ds(romPath) ? save3ds.fingerprint(sav
 // nothing.
 async function restore3dsSave(romPath, zipBytes) {
   const id = await n3dsId(romPath);
+  replace3dsSave(id, save3ds.unpack(zipBytes));
+}
+
+// The game's save swapped for tree, after a copy of the one there goes to
+// save-backups/: the same for a cloud download and for an import. make, when
+// given, builds the tree from the current one (an import keeps its metadata).
+function replace3dsSave(id, tree, make) {
+  if (!id) throw new Error('No se pudo leer qué juego de 3DS es');
   const dir = save3ds.dataDir(app.getPath('userData'), id);
-  const incoming = save3ds.unpack(zipBytes);
   const current = save3ds.readTree(dir);
+  const result = make ? make(current) : { tree, warnings: [] };
   if (save3ds.hasSaveData(current)) {
     fs.writeFileSync(userFile('save-backups', `3ds-${id}.zip`), save3ds.pack(current));
   }
-  save3ds.writeTree(dir, incoming);
+  save3ds.writeTree(dir, result.tree);
+  return result.warnings;
+}
+
+// A zip from Citra, Azahar or Checkpoint the user picked, for a game that is
+// not running (the renderer closes it first, as for a cloud download). Read
+// whole into memory, so a size cap first: a save is a few hundred KB.
+const MAX_IMPORT_BYTES = 64 * 1024 * 1024;
+async function import3dsSave(romPath, file) {
+  if (fs.statSync(file).size > MAX_IMPORT_BYTES) throw new Error('Ese archivo es demasiado grande para ser una partida');
+  const incoming = save3ds.unpack(new Uint8Array(fs.readFileSync(file)));
+  return replace3dsSave(await n3dsId(romPath), null, (current) => save3ds.importTree(incoming, current));
 }
 
 // A save the core wrote less than this long ago may be half written (it
@@ -783,6 +802,13 @@ function register() {
     }
     fs.writeFileSync(savePath, bytes);
     return savePath;
+  });
+
+  // A save from another emulator: 3DS only for now (the other consoles take a
+  // raw .sav beside the ROM). Resolves to warnings worth showing.
+  ipcMain.handle('hub:save-import', (event, { romPath, file }) => {
+    if (!isN3ds(romPath)) throw new Error('Importar una partida solo funciona con juegos de 3DS por ahora');
+    return import3dsSave(romPath, file);
   });
 
   // Gone from the cloud for every device; the copy on this PC stays.

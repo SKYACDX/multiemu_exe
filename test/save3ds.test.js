@@ -98,6 +98,36 @@ async function main() {
       assert.throws(() => save3ds.unpack(zipSync({ [name]: bytes(1) })), /ruta no permitida/, name);
     }
 
+    // ---- a save brought from another emulator (importTree)
+    const meta = bytes(7, 7);
+    const mine = { '00000001.metadata': bytes(1, 1) }; // what this console made on first boot
+    const keys = (result) => Object.keys(result.tree).sort();
+
+    // Citra/Azahar: their data folder, under whatever prefix the zip has
+    for (const prefix of ['', 'data/', '00040000/00055e00/data/']) {
+      const result = save3ds.importTree({ [`${prefix}00000001.metadata`]: meta, [`${prefix}00000001/main`]: bytes(5) }, mine);
+      assert.deepStrictEqual(keys(result), ['00000001.metadata', '00000001/main'], prefix);
+      assert.deepStrictEqual(result.tree['00000001.metadata'], meta, 'its own metadata wins');
+      assert.deepStrictEqual(result.warnings, []);
+    }
+    // Checkpoint: the archive's own files, loose or in a dated folder
+    for (const folder of ['', '2026-10-05_12-00-00/']) {
+      const result = save3ds.importTree({ [`${folder}main`]: bytes(5), [`${folder}sub/x`]: bytes(6) }, mine);
+      assert.deepStrictEqual(keys(result), ['00000001.metadata', '00000001/main', '00000001/sub/x'], folder);
+      assert.deepStrictEqual(result.tree['00000001.metadata'], mine['00000001.metadata'], 'keeps this console\'s metadata');
+    }
+    // extdata dropped with a warning; macOS and Windows litter ignored
+    const extra = save3ds.importTree(
+      { 'data/00000001/main': bytes(5), 'extdata/00000000/x': bytes(1), '__MACOSX/data/._main': bytes(1), 'Thumbs.db': bytes(1) },
+      mine,
+    );
+    assert.deepStrictEqual(keys(extra), ['00000001.metadata', '00000001/main']);
+    assert.strictEqual(extra.warnings.length, 1);
+    // nothing to import, or nowhere to put it
+    assert.throws(() => save3ds.importTree({ 'data/00000001.metadata': meta }, mine), /ninguna partida/);
+    assert.throws(() => save3ds.importTree({}, mine), /ninguna partida/);
+    assert.throws(() => save3ds.importTree({ main: bytes(5) }, {}), /Abre el juego una vez/);
+
     // ---- when a file last changed
     assert.strictEqual(save3ds.newestMtimeMs(path.join(root, 'nowhere')), 0);
     assert.ok(Date.now() - save3ds.newestMtimeMs(source) < 60_000);
